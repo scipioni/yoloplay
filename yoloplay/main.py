@@ -1,8 +1,12 @@
+import os
+import time
+from typing import Generator, Optional, Tuple
+
 import cv2
 import numpy as np
-from typing import Tuple, Optional, Generator
 from ultralytics import YOLO
-import os
+
+from .utils import draw_pose_estimation
 
 
 class CameraPoseProcessor:
@@ -30,7 +34,7 @@ class CameraPoseProcessor:
         """
         # Check if display is available (for headless environments)
         display_available = self._check_display_available()
-        
+
         # Open camera
         cap = cv2.VideoCapture(camera_index)
 
@@ -52,14 +56,21 @@ class CameraPoseProcessor:
 
             # Only show the frame if display is available
             if display_available:
-                cv2.imshow("camera", frame)
+                # Run pose detection
+                results = self.model(frame)
+
+                # Draw pose estimation with bones on the frame
+                annotated_frame = draw_pose_estimation(frame, results)
+
+                # Show the annotated frame
+                cv2.imshow("camera", annotated_frame)
 
                 # Break on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
             else:
                 # In headless mode, just print a message every few frames to show activity
-                import time
+
                 time.sleep(0.1)  # Small delay to prevent excessive CPU usage
                 # Break on Ctrl+C
                 try:
@@ -73,18 +84,21 @@ class CameraPoseProcessor:
         cap.release()
         if display_available:
             cv2.destroyAllWindows()
-    
+
     def _check_display_available(self) -> bool:
         """
         Check if a display is available (for GUI operations)
         """
         # Check if running in a container without display
-        if os.environ.get('DISPLAY'):
+        if os.environ.get("DISPLAY"):
             return True
         # On Linux, try to access X11 display
         try:
             import subprocess
-            result = subprocess.run(['xdpyinfo'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            result = subprocess.run(
+                ["xdpyinfo"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
             return result.returncode == 0
         except FileNotFoundError:
             # xdpyinfo not available, assume no display
