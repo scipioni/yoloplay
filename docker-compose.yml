@@ -1,0 +1,35 @@
+services:  
+  yololab:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yololab
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - DISPLAY=${DISPLAY:-}
+      - XAUTHORITY=/tmp/.docker.xauth
+    volumes:
+      # Mount the package source code for development
+      - .:/workspace/yololab
+      # Mount data directory for input/output
+      - ./data:/workspace/data
+      # Mount X11 socket for GUI applications
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Mount host's Xauthority for GUI access
+      - /home/${USER:-root}/.Xauthority:/tmp/.docker.xauth:rw
+      # Mount camera device if needed
+      - /dev/video0:/dev/video0
+    working_dir: /workspace/yololab
+    stdin_open: true
+    tty: true
+    network_mode: host
+    devices:
+      - /dev/video0:/dev/video0  # Camera access
+    # Removed fixed command to allow passing arguments
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

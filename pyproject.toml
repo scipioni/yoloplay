@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yololab"
+version = "0.1.0"
+description = "yolo experiments"
+readme = "README.md"
+requires-python = ">=3.7"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.21.0",
+    "opencv-python>=4.5.0",
+    "pyyaml>=6.0",
+    "torch>=1.9.0",
+    "torchvision>=0.10.0",
+    "ultralytics>=8.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov",
+    "black",
+    "flake8",
+    "mypy"
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/yolopose-vertical-mapper"
+Repository = "https://github.com/yourusername/yolopose-vertical-mapper"
+
+[project.scripts]
+yololab = "yololab.main:main"
