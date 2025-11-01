@@ -25,7 +25,6 @@ services:
     network_mode: host
     devices:
       - /dev/video0:/dev/video0  # Camera access
-    entrypoint: /bin/bash
     deploy:
       resources:
         reservations:

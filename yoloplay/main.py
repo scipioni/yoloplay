@@ -14,13 +14,16 @@ class CameraPoseProcessor:
     Class to handle camera input, YOLO Pose detection, and coordinate transformation
     """
 
-    def __init__(self, config_path: str, model_path: str = "yolov8n-pose.pt"):
+    def __init__(self, config_path: str, model_path: str = "yolov8n-pose.pt", camera_height: float = 130.0):
         self.config_path = (
             config_path  # Store config path for saving calibration points
         )
 
         # Load YOLO Pose model
         self.model = YOLO(model_path)
+        
+        # Store camera height in cm
+        self.camera_height = camera_height
 
     def run_camera_loop(
         self, camera_index: int = 0, display_original: bool = True
@@ -42,9 +45,9 @@ class CameraPoseProcessor:
             raise ValueError(f"Cannot open camera with index {camera_index}")
 
         if display_available:
-            print(f"Camera opened successfully. Press 'q' to quit.")
+            print(f"Camera opened successfully at height {self.camera_height}cm. Press 'q' to quit.")
         else:
-            print(f"Camera opened successfully in headless mode.")
+            print(f"Camera opened successfully in headless mode at height {self.camera_height}cm.")
 
         while True:
             # Read frame from camera
@@ -125,10 +128,16 @@ def main():
         default="yolov8n-pose.pt",
         help="YOLO Pose model path (default: yolov8n-pose.pt)",
     )
+    parser.add_argument(
+        "--height",
+        type=float,
+        default=130.0,
+        help="Camera height in cm (default: 130.0)",
+    )
 
     args = parser.parse_args()
 
-    processor = CameraPoseProcessor(args.config, args.model)
+    processor = CameraPoseProcessor(args.config, args.model, args.height)
 
     processor.run_camera_loop(args.camera)
 

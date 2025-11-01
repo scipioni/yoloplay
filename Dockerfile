@@ -77,5 +77,3 @@ RUN apt-get update && apt-get install -y \
 # Install opencv-python-headless in the runtime stage (this should override if any full opencv was copied)
 RUN pip install opencv-python-headless
 
-# Set the entrypoint
-ENTRYPOINT ["python", "-m", "yoloplay.main"]

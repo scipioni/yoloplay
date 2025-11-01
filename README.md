@@ -1,20 +1,14 @@
 # yoloplay
 
-This package provides functionality to use yolopose. 
-
-<!-- In particularly useful for applications that need to transform pose coordinates from a perspective view (e.g., from a camera at an angle to the floor) to a front-facing view where floor measurements become accurate. -->
+This package provides functionality to use yolopose with enhanced pose visualization and configurable camera parameters.
 
 ## Features
 
-<!-- - 4-point floor calibration for accurate perspective transformation
-- Support for mapping YOLO Pose COCO format keypoints
-- Configurable transformation parameters
-- Visualization of calibration points and results
-- Saving of transformation matrices for consistent mapping
+- Real-time pose estimation using YOLO Pose models
+- Visualization of pose keypoints and skeletal connections (bones)
+- Configurable camera height parameter for accurate floor measurements
 - Live camera support for real-time processing
-- Calibration mode for setting up the 4-point transformation
-- Camera height configuration (150cm default)
-- Fallen person detection with visual effects on bones (red color) -->
+- Dockerized deployment for easy setup and portability
 
 
 ## Usage
@@ -24,11 +18,16 @@ This package provides functionality to use yolopose.
 docker compose build
 ```
 
-
+2. Run the application:
 ```bash
 # Run continuously in the background (with GUI)
 xhost +local:docker
-docker compose run --rm yoloplay bash
+docker compose run --rm yoloplay python -m yoloplay.main
 
+# Run with a specific camera height (in cm)
+docker compose run --rm yoloplay python -m yoloplay.main --height 150
+
+# For other options, use the help command
+docker compose run --rm yoloplay python -m yoloplay.main --help
 ```
 
