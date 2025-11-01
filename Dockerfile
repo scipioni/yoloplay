@@ -38,8 +38,8 @@ RUN pip install --upgrade pip && \
     pip install opencv-python-headless ultralytics pyyaml numpy
 
 # Install the yolopose vertical mapper package in development mode
-COPY . /workspace/yololab
-WORKDIR /workspace/yololab
+COPY . /workspace/yoloplay
+WORKDIR /workspace/yoloplay
 RUN pip install -e .
 
 # Create a directory for mounting data

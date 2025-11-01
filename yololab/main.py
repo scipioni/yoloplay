@@ -58,7 +58,7 @@ def main():
     """Command line entry point for camera functionality"""
     import argparse
 
-    parser = argparse.ArgumentParser(description="yololab")
+    parser = argparse.ArgumentParser(description="yoloplay")
     parser.add_argument(
         "--config", type=str, default="./config.yaml", help="Path to configuration file"
     )
