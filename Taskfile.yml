@@ -13,5 +13,5 @@ tasks:
 
   cli:
     cmds:
-      - docker compose run --rm yoloplay bash
+      - docker compose run --rm yoloplay
     silent: true

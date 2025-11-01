@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libgomp1 \
     libgtk-3-dev \
+    libgl1-mesa-glx \
+    libglib2.0-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
@@ -59,6 +61,21 @@ WORKDIR /workspace/yoloplay
 
 # Create a directory for mounting data
 RUN mkdir -p /workspace/data
+
+# Install GUI libraries in the runtime stage to support OpenCV GUI functions when needed
+RUN apt-get update && apt-get install -y \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libgtk-3-dev \
+    libgl1-mesa-glx \
+    libglib2.0-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install opencv-python-headless in the runtime stage (this should override if any full opencv was copied)
+RUN pip install opencv-python-headless
 
 # Set the entrypoint
 ENTRYPOINT ["python", "-m", "yoloplay.main"]

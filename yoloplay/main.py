@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from typing import Tuple, Optional, Generator
 from ultralytics import YOLO
+import os
 
 
 class CameraPoseProcessor:
@@ -27,13 +28,19 @@ class CameraPoseProcessor:
             camera_index: Index of the camera to use (default: 0)
             display_original: Whether to display both original and transformed frames
         """
+        # Check if display is available (for headless environments)
+        display_available = self._check_display_available()
+        
         # Open camera
         cap = cv2.VideoCapture(camera_index)
 
         if not cap.isOpened():
             raise ValueError(f"Cannot open camera with index {camera_index}")
 
-        print(f"Camera opened successfully. Press 'q' to quit.")
+        if display_available:
+            print(f"Camera opened successfully. Press 'q' to quit.")
+        else:
+            print(f"Camera opened successfully in headless mode.")
 
         while True:
             # Read frame from camera
@@ -43,15 +50,48 @@ class CameraPoseProcessor:
                 print("Failed to grab frame from camera")
                 break
 
-            cv2.imshow("camera", frame)
+            # Only show the frame if display is available
+            if display_available:
+                cv2.imshow("camera", frame)
 
-            # Break on 'q' key press
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+                # Break on 'q' key press
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+            else:
+                # In headless mode, just print a message every few frames to show activity
+                import time
+                time.sleep(0.1)  # Small delay to prevent excessive CPU usage
+                # Break on Ctrl+C
+                try:
+                    # Do nothing for a while, check periodically if we need to quit
+                    pass
+                except KeyboardInterrupt:
+                    print("Interrupted by user")
+                    break
 
-        # Release camera and close windows
+        # Release camera and close windows if display is available
         cap.release()
-        cv2.destroyAllWindows()
+        if display_available:
+            cv2.destroyAllWindows()
+    
+    def _check_display_available(self) -> bool:
+        """
+        Check if a display is available (for GUI operations)
+        """
+        # Check if running in a container without display
+        if os.environ.get('DISPLAY'):
+            return True
+        # On Linux, try to access X11 display
+        try:
+            import subprocess
+            result = subprocess.run(['xdpyinfo'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return result.returncode == 0
+        except FileNotFoundError:
+            # xdpyinfo not available, assume no display
+            return False
+        except:
+            # Other error, safer to assume no display
+            return False
 
 
 def main():

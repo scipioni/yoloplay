@@ -25,7 +25,7 @@ services:
     network_mode: host
     devices:
       - /dev/video0:/dev/video0  # Camera access
-    # Removed fixed command to allow passing arguments
+    entrypoint: /bin/bash
     deploy:
       resources:
         reservations:
