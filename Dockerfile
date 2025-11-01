@@ -1,12 +1,9 @@
-# Use NVIDIA PyTorch base image with CUDA 12
-FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-devel
+# Build stage
+FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-devel AS builder
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-ENV CUDA_HOME=/usr/local/cuda
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -37,14 +34,31 @@ WORKDIR /workspace
 RUN pip install --upgrade pip && \
     pip install opencv-python-headless ultralytics pyyaml numpy
 
-# Install the yolopose vertical mapper package in development mode
+# Install the yoloplay package in development mode
 COPY . /workspace/yoloplay
 WORKDIR /workspace/yoloplay
 RUN pip install -e .
+
+# Runtime stage
+FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV CUDA_HOME=/usr/local/cuda
+
+# Copy Python environment from builder
+COPY --from=builder /opt/conda /opt/conda
+
+# Copy the installed yoloplay package
+COPY --from=builder /workspace/yoloplay /workspace/yoloplay
+
+# Set working directory
+WORKDIR /workspace/yoloplay
 
 # Create a directory for mounting data
 RUN mkdir -p /workspace/data
 
 # Set the entrypoint
-WORKDIR /workspace
-#ENTRYPOINT ["/opt/conda/bin/python", "-m", "yolopose_vertical_mapper.main"]
+ENTRYPOINT ["python", "-m", "yoloplay.main"]

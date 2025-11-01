@@ -26,6 +26,9 @@ dependencies = [
     "ultralytics>=8.0.0"
 ]
 
+[tool.setuptools]
+packages = ["yoloplay"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=6.0",
