@@ -1,226 +1,211 @@
+"""
+Main application for pose detection with various input sources.
+"""
+
 import os
 import time
-from typing import Generator, Optional, Tuple
+from typing import Optional
 
 import cv2
-import numpy as np
-from ultralytics import YOLO
 
-from .utils import draw_pose_estimation, draw_mediapipe_pose_estimation
+from .detectors import PoseDetector, YOLOPoseDetector, MediaPipePoseDetector
+from .frame_providers import (
+    FrameProvider,
+    CameraFrameProvider,
+    VideoFrameProvider,
+    ImageFrameProvider,
+    PlaybackMode,
+)
 
 
-class CameraPoseProcessor:
+class PoseProcessor:
     """
-    Class to handle camera input, YOLO Pose detection, and coordinate transformation
+    Main processor class that combines a pose detector with a frame provider.
     """
 
-    def __init__(self, config_path: str, model_path: str = "yolov8n-pose.pt", camera_height: float = 130.0, use_mediapipe: bool = False):
-        self.config_path = (
-            config_path  # Store config path for saving calibration points
-        )
-
-        self.use_mediapipe = use_mediapipe
-
-        if use_mediapipe:
-            import mediapipe as mp
-            self.mp_pose = mp.solutions.pose
-            self.pose = self.mp_pose.Pose(
-                static_image_mode=False,
-                model_complexity=1,
-                enable_segmentation=False,
-                min_detection_confidence=0.5
-            )
-            self.mp_drawing = mp.solutions.drawing_utils
-        else:
-            # Load YOLO Pose model
-            self.model = YOLO(model_path)
-
-        # Store camera height in cm
-        self.camera_height = camera_height
-
-    def run_camera_loop(
-        self, camera_index: int = 0, display_original: bool = True
-    ) -> None:
+    def __init__(self, detector: PoseDetector, frame_provider: FrameProvider):
         """
-        Run the main camera processing loop
+        Initialize the pose processor.
 
         Args:
-            camera_index: Index of the camera to use (default: 0)
-            display_original: Whether to display both original and transformed frames
+            detector: Pose detector instance (YOLO or MediaPipe)
+            frame_provider: Frame provider instance (camera, video, or images)
         """
-        # Check if display is available (for headless environments)
-        display_available = self._check_display_available()
+        self.detector = detector
+        self.frame_provider = frame_provider
+        self.display_available = self._check_display_available()
+        
+        # FPS tracking
+        self.prev_frame_time = 0.0
+        self.fps = 0.0
 
-        # Open camera
-        cap = cv2.VideoCapture(camera_index)
+    def run(self, window_name: str = "Pose Detection") -> None:
+        """
+        Run the main processing loop.
 
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open camera with index {camera_index}")
+        Args:
+            window_name: Name of the display window
+        """
+        # Open the frame source
+        if not self.frame_provider.open():
+            raise ValueError("Cannot open frame source")
 
-        if display_available:
-            print(f"Camera opened successfully at height {self.camera_height}cm. Press 'q' to quit.")
+        print(f"Frame source opened successfully.")
+        
+        # Display controls based on provider type
+        if isinstance(self.frame_provider, VideoFrameProvider):
+            print("Controls: 'q'=quit, 'p'=play/pause, SPACE=step, 'm'=toggle mode")
+        elif isinstance(self.frame_provider, ImageFrameProvider):
+            print("Controls: 'q'=quit, 'n'=next, 'p'=previous, 'm'=toggle mode")
         else:
-            print(f"Camera opened successfully in headless mode at height {self.camera_height}cm.")
+            print("Controls: 'q'=quit")
 
-        while True:
-            # Read frame from camera
-            ret, frame = cap.read()
+        try:
+            while True:
+                # Read frame from provider
+                ret, frame = self.frame_provider.read()
 
-            if not ret:
-                print("Failed to grab frame from camera")
-                break
+                if not ret:
+                    print("End of frames or failed to read frame")
+                    break
 
-            # Only show the frame if display is available
-            if display_available:
-                if self.use_mediapipe:
-                    # Convert BGR to RGB for MediaPipe
-                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    # Run MediaPipe pose detection
-                    pose_results = self.pose.process(rgb_frame)
-                    # Draw pose estimation on the frame
-                    annotated_frame = draw_mediapipe_pose_estimation(frame, pose_results)
+                # If frame is None (paused or waiting for step), handle input and continue
+                if frame is None:
+                    if self.display_available:
+                        key = cv2.waitKey(30) & 0xFF
+                        self._handle_key_press(key)
+                        if key == ord('q'):
+                            break
+                    else:
+                        time.sleep(0.03)
+                    continue
+
+                # Calculate FPS
+                current_time = time.time()
+                time_diff = current_time - self.prev_frame_time
+                self.prev_frame_time = current_time
+                
+                if time_diff > 0:
+                    self.fps = 1.0 / time_diff
+                
+                # Detect pose
+                results = self.detector.detect(frame)
+
+                # Visualize results
+                annotated_frame = self.detector.visualize(frame, results)
+
+                # Display the frame if display is available
+                if self.display_available:
+                    # Add FPS counter
+                    fps_text = f"FPS: {self.fps:.1f}"
+                    cv2.putText(
+                        annotated_frame,
+                        fps_text,
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 255, 0),
+                        2,
+                    )
+                    
+                    # Add status text for video/image providers
+                    status_text = self._get_status_text()
+                    if status_text:
+                        cv2.putText(
+                            annotated_frame,
+                            status_text,
+                            (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0, 255, 0),
+                            2,
+                        )
+
+                    cv2.imshow(window_name, annotated_frame)
+
+                    # Handle keyboard input
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+                    self._handle_key_press(key)
                 else:
-                    # Run pose detection
-                    results = self.model(frame)
-                    # Draw pose estimation with bones on the frame
-                    annotated_frame = draw_pose_estimation(frame, results)
+                    # In headless mode, just add a small delay
+                    time.sleep(0.1)
 
-                # Show the annotated frame
-                cv2.imshow("camera", annotated_frame)
+        except KeyboardInterrupt:
+            print("Interrupted by user")
+        finally:
+            # Release resources
+            self.frame_provider.release()
+            if self.display_available:
+                cv2.destroyAllWindows()
 
-                # Break on 'q' key press
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-            else:
-                # In headless mode, just print a message every few frames to show activity
-
-                time.sleep(0.1)  # Small delay to prevent excessive CPU usage
-                # Break on Ctrl+C
-                try:
-                    # Do nothing for a while, check periodically if we need to quit
-                    pass
-                except KeyboardInterrupt:
-                    print("Interrupted by user")
-                    break
-
-        # Release camera and close windows if display is available
-        cap.release()
-        if display_available:
-            cv2.destroyAllWindows()
-
-    def run_video_loop(self, video_path: str, display_original: bool = True) -> None:
+    def _handle_key_press(self, key: int) -> None:
         """
-        Run the video processing loop
+        Handle keyboard input for controlling playback.
 
         Args:
-            video_path: Path to the video file
-            display_original: Whether to display the processed frames
+            key: ASCII code of the pressed key
         """
-        # Check if display is available (for headless environments)
-        display_available = self._check_display_available()
+        if isinstance(self.frame_provider, VideoFrameProvider):
+            if key == ord('p'):
+                self.frame_provider.toggle_pause()
+                status = "Paused" if self.frame_provider.is_paused else "Playing"
+                print(f"Video {status}")
+            elif key == ord(' '):  # Space key
+                self.frame_provider.step()
+            elif key == ord('m'):
+                # Toggle between PLAY and STEP mode
+                new_mode = (
+                    PlaybackMode.STEP
+                    if self.frame_provider.mode == PlaybackMode.PLAY
+                    else PlaybackMode.PLAY
+                )
+                self.frame_provider.set_mode(new_mode)
+                print(f"Mode changed to {new_mode.value}")
 
-        # Open video file
-        cap = cv2.VideoCapture(video_path)
+        elif isinstance(self.frame_provider, ImageFrameProvider):
+            if key == ord('n') or key == ord(' '):  # Next image
+                self.frame_provider.step()
+            elif key == ord('p'):  # Previous image
+                self.frame_provider.previous()
+            elif key == ord('m'):
+                # Toggle between PLAY and STEP mode
+                new_mode = (
+                    PlaybackMode.STEP
+                    if self.frame_provider.mode == PlaybackMode.PLAY
+                    else PlaybackMode.PLAY
+                )
+                self.frame_provider.set_mode(new_mode)
+                print(f"Mode changed to {new_mode.value}")
 
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open video file {video_path}")
-
-        if display_available:
-            print(f"Video opened successfully. Press 'q' to quit.")
-        else:
-            print(f"Video opened successfully in headless mode.")
-
-        while True:
-            # Read frame from video
-            ret, frame = cap.read()
-
-            if not ret:
-                print("End of video or failed to grab frame")
-                break
-
-            # Only show the frame if display is available
-            if display_available:
-                if self.use_mediapipe:
-                    # Convert BGR to RGB for MediaPipe
-                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    # Run MediaPipe pose detection
-                    pose_results = self.pose.process(rgb_frame)
-                    # Draw pose estimation on the frame
-                    annotated_frame = draw_mediapipe_pose_estimation(frame, pose_results)
-                else:
-                    # Run pose detection
-                    results = self.model(frame)
-                    # Draw pose estimation with bones on the frame
-                    annotated_frame = draw_pose_estimation(frame, results)
-
-                # Show the annotated frame
-                cv2.imshow("video", annotated_frame)
-
-                # Break on 'q' key press
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
-            else:
-                # In headless mode, just print a message every few frames to show activity
-                time.sleep(0.1)  # Small delay to prevent excessive CPU usage
-                # Break on Ctrl+C
-                try:
-                    # Do nothing for a while, check periodically if we need to quit
-                    pass
-                except KeyboardInterrupt:
-                    print("Interrupted by user")
-                    break
-
-        # Release video and close windows if display is available
-        cap.release()
-        if display_available:
-            cv2.destroyAllWindows()
-
-    def run_images_loop(self, image_paths: list[str], display_original: bool = True) -> None:
+    def _get_status_text(self) -> Optional[str]:
         """
-        Run the images processing loop
+        Get status text to display on the frame.
 
-        Args:
-            image_paths: List of paths to image files
-            display_original: Whether to display the processed images
+        Returns:
+            Status text string or None
         """
-        # Check if display is available (for headless environments)
-        display_available = self._check_display_available()
-
-        for image_path in image_paths:
-            # Read image
-            frame = cv2.imread(image_path)
-
-            if frame is None:
-                print(f"Failed to load image {image_path}")
-                continue
-
-            if self.use_mediapipe:
-                # Convert BGR to RGB for MediaPipe
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                # Run MediaPipe pose detection
-                pose_results = self.pose.process(rgb_frame)
-                # Draw pose estimation on the frame
-                annotated_frame = draw_mediapipe_pose_estimation(frame, pose_results)
+        if isinstance(self.frame_provider, VideoFrameProvider):
+            if self.frame_provider.mode == PlaybackMode.STEP:
+                return "MODE: STEP (SPACE to advance)"
+            elif self.frame_provider.is_paused:
+                return "PAUSED (Press 'p' to play)"
             else:
-                # Run pose detection
-                results = self.model(frame)
-                # Draw pose estimation with bones on the frame
-                annotated_frame = draw_pose_estimation(frame, results)
-
-            if display_available:
-                # Show the annotated frame
-                cv2.imshow("image", annotated_frame)
-                cv2.waitKey(0)  # Wait for key press to show next image
-            else:
-                # In headless mode, just print a message
-                print(f"Processed image {image_path}")
-
-        if display_available:
-            cv2.destroyAllWindows()
+                return "PLAYING"
+        elif isinstance(self.frame_provider, ImageFrameProvider):
+            total = len(self.frame_provider.image_paths)
+            current = self.frame_provider.current_index
+            mode = self.frame_provider.mode.value.upper()
+            return f"Image {current}/{total} - MODE: {mode}"
+        return None
 
     def _check_display_available(self) -> bool:
         """
-        Check if a display is available (for GUI operations)
+        Check if a display is available (for GUI operations).
+        
+        Returns:
+            True if display is available, False otherwise
         """
         # Check if running in a container without display
         if os.environ.get("DISPLAY"):
@@ -242,15 +227,16 @@ class CameraPoseProcessor:
 
 
 def main():
-    """Command line entry point for camera functionality"""
+    """Command line entry point for pose detection application."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="yoloplay")
+    parser = argparse.ArgumentParser(description="Pose detection with YOLO or MediaPipe")
     parser.add_argument(
-        "--config", type=str, default="./config.yaml", help="Path to configuration file"
-    )
-    parser.add_argument(
-        "--camera", type=int, default=0, help="Camera index (default: 0)"
+        "--detector",
+        type=str,
+        choices=["yolo", "mediapipe"],
+        default="yolo",
+        help="Pose detector to use (default: yolo)",
     )
     parser.add_argument(
         "--model",
@@ -259,10 +245,9 @@ def main():
         help="YOLO Pose model path (default: yolov8n-pose.pt)",
     )
     parser.add_argument(
-        "--height",
-        type=float,
-        default=130.0,
-        help="Camera height in cm (default: 130.0)",
+        "--camera",
+        type=int,
+        help="Camera index to use for camera input",
     )
     parser.add_argument(
         "--video",
@@ -275,21 +260,41 @@ def main():
         help="List of image files to process",
     )
     parser.add_argument(
-        "--mediapipe",
-        action="store_true",
-        help="Use MediaPipe for pose detection instead of YOLO",
+        "--mode",
+        type=str,
+        choices=["play", "step"],
+        default="play",
+        help="Playback mode for video/images (default: play)",
     )
 
     args = parser.parse_args()
 
-    processor = CameraPoseProcessor(args.config, args.model, args.height, args.mediapipe)
+    # Create detector based on user choice
+    if args.detector == "mediapipe":
+        detector = MediaPipePoseDetector()
+        print("Using MediaPipe pose detector")
+    else:
+        detector = YOLOPoseDetector(args.model)
+        print(f"Using YOLO pose detector with model: {args.model}")
+
+    # Create frame provider based on input source
+    playback_mode = PlaybackMode.PLAY if args.mode == "play" else PlaybackMode.STEP
 
     if args.video:
-        processor.run_video_loop(args.video)
+        frame_provider = VideoFrameProvider(args.video, mode=playback_mode)
+        print(f"Processing video: {args.video}")
     elif args.images:
-        processor.run_images_loop(args.images)
+        frame_provider = ImageFrameProvider(args.images, mode=playback_mode)
+        print(f"Processing {len(args.images)} images")
     else:
-        processor.run_camera_loop(args.camera)
+        # Default to camera
+        camera_index = args.camera if args.camera is not None else 0
+        frame_provider = CameraFrameProvider(camera_index)
+        print(f"Using camera index: {camera_index}")
+
+    # Create processor and run
+    processor = PoseProcessor(detector, frame_provider)
+    processor.run()
 
 
 if __name__ == "__main__":
