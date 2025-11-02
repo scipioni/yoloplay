@@ -88,6 +88,102 @@ class CameraPoseProcessor:
         if display_available:
             cv2.destroyAllWindows()
 
+    def run_video_loop(self, video_path: str, display_original: bool = True) -> None:
+        """
+        Run the video processing loop
+
+        Args:
+            video_path: Path to the video file
+            display_original: Whether to display the processed frames
+        """
+        # Check if display is available (for headless environments)
+        display_available = self._check_display_available()
+
+        # Open video file
+        cap = cv2.VideoCapture(video_path)
+
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video file {video_path}")
+
+        if display_available:
+            print(f"Video opened successfully. Press 'q' to quit.")
+        else:
+            print(f"Video opened successfully in headless mode.")
+
+        while True:
+            # Read frame from video
+            ret, frame = cap.read()
+
+            if not ret:
+                print("End of video or failed to grab frame")
+                break
+
+            # Only show the frame if display is available
+            if display_available:
+                # Run pose detection
+                results = self.model(frame)
+
+                # Draw pose estimation with bones on the frame
+                annotated_frame = draw_pose_estimation(frame, results)
+
+                # Show the annotated frame
+                cv2.imshow("video", annotated_frame)
+
+                # Break on 'q' key press
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+            else:
+                # In headless mode, just print a message every few frames to show activity
+                time.sleep(0.1)  # Small delay to prevent excessive CPU usage
+                # Break on Ctrl+C
+                try:
+                    # Do nothing for a while, check periodically if we need to quit
+                    pass
+                except KeyboardInterrupt:
+                    print("Interrupted by user")
+                    break
+
+        # Release video and close windows if display is available
+        cap.release()
+        if display_available:
+            cv2.destroyAllWindows()
+
+    def run_images_loop(self, image_paths: list[str], display_original: bool = True) -> None:
+        """
+        Run the images processing loop
+
+        Args:
+            image_paths: List of paths to image files
+            display_original: Whether to display the processed images
+        """
+        # Check if display is available (for headless environments)
+        display_available = self._check_display_available()
+
+        for image_path in image_paths:
+            # Read image
+            frame = cv2.imread(image_path)
+
+            if frame is None:
+                print(f"Failed to load image {image_path}")
+                continue
+
+            # Run pose detection
+            results = self.model(frame)
+
+            # Draw pose estimation with bones on the frame
+            annotated_frame = draw_pose_estimation(frame, results)
+
+            if display_available:
+                # Show the annotated frame
+                cv2.imshow("image", annotated_frame)
+                cv2.waitKey(0)  # Wait for key press to show next image
+            else:
+                # In headless mode, just print a message
+                print(f"Processed image {image_path}")
+
+        if display_available:
+            cv2.destroyAllWindows()
+
     def _check_display_available(self) -> bool:
         """
         Check if a display is available (for GUI operations)
@@ -134,12 +230,27 @@ def main():
         default=130.0,
         help="Camera height in cm (default: 130.0)",
     )
+    parser.add_argument(
+        "--video",
+        type=str,
+        help="Path to video file to process",
+    )
+    parser.add_argument(
+        "--images",
+        nargs='+',
+        help="List of image files to process",
+    )
 
     args = parser.parse_args()
 
     processor = CameraPoseProcessor(args.config, args.model, args.height)
 
-    processor.run_camera_loop(args.camera)
+    if args.video:
+        processor.run_video_loop(args.video)
+    elif args.images:
+        processor.run_images_loop(args.images)
+    else:
+        processor.run_camera_loop(args.camera)
 
 
 if __name__ == "__main__":
