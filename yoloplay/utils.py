@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import mediapipe as mp
 
 
 skeleton = [
@@ -117,5 +118,36 @@ def draw_pose_estimation(frame, results):
                                 thickness=2,
                                 lineType=cv2.LINE_AA,
                             )
+
+    return annotated_frame
+
+
+def draw_mediapipe_pose_estimation(frame, pose_results):
+    """
+    Draw MediaPipe pose estimation results on the frame.
+
+    Args:
+        frame: Input image/frame to draw on
+        pose_results: MediaPipe pose results object
+
+    Returns:
+        Frame with pose estimation drawn on it
+    """
+    # Create a copy of the frame to draw on
+    annotated_frame = frame.copy()
+
+    if pose_results.pose_landmarks:
+        # Draw pose landmarks and connections
+        mp.solutions.drawing_utils.draw_landmarks(
+            annotated_frame,
+            pose_results.pose_landmarks,
+            mp.solutions.pose.POSE_CONNECTIONS,
+            landmark_drawing_spec=mp.solutions.drawing_utils.DrawingSpec(
+                color=(0, 255, 0), thickness=2, circle_radius=2
+            ),
+            connection_drawing_spec=mp.solutions.drawing_utils.DrawingSpec(
+                color=(255, 0, 0), thickness=2
+            )
+        )
 
     return annotated_frame

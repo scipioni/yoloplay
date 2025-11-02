@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from .utils import draw_pose_estimation
+from .utils import draw_pose_estimation, draw_mediapipe_pose_estimation
 
 
 class CameraPoseProcessor:
@@ -14,14 +14,27 @@ class CameraPoseProcessor:
     Class to handle camera input, YOLO Pose detection, and coordinate transformation
     """
 
-    def __init__(self, config_path: str, model_path: str = "yolov8n-pose.pt", camera_height: float = 130.0):
+    def __init__(self, config_path: str, model_path: str = "yolov8n-pose.pt", camera_height: float = 130.0, use_mediapipe: bool = False):
         self.config_path = (
             config_path  # Store config path for saving calibration points
         )
 
-        # Load YOLO Pose model
-        self.model = YOLO(model_path)
-        
+        self.use_mediapipe = use_mediapipe
+
+        if use_mediapipe:
+            import mediapipe as mp
+            self.mp_pose = mp.solutions.pose
+            self.pose = self.mp_pose.Pose(
+                static_image_mode=False,
+                model_complexity=1,
+                enable_segmentation=False,
+                min_detection_confidence=0.5
+            )
+            self.mp_drawing = mp.solutions.drawing_utils
+        else:
+            # Load YOLO Pose model
+            self.model = YOLO(model_path)
+
         # Store camera height in cm
         self.camera_height = camera_height
 
@@ -59,11 +72,18 @@ class CameraPoseProcessor:
 
             # Only show the frame if display is available
             if display_available:
-                # Run pose detection
-                results = self.model(frame)
-
-                # Draw pose estimation with bones on the frame
-                annotated_frame = draw_pose_estimation(frame, results)
+                if self.use_mediapipe:
+                    # Convert BGR to RGB for MediaPipe
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # Run MediaPipe pose detection
+                    pose_results = self.pose.process(rgb_frame)
+                    # Draw pose estimation on the frame
+                    annotated_frame = draw_mediapipe_pose_estimation(frame, pose_results)
+                else:
+                    # Run pose detection
+                    results = self.model(frame)
+                    # Draw pose estimation with bones on the frame
+                    annotated_frame = draw_pose_estimation(frame, results)
 
                 # Show the annotated frame
                 cv2.imshow("camera", annotated_frame)
@@ -120,11 +140,18 @@ class CameraPoseProcessor:
 
             # Only show the frame if display is available
             if display_available:
-                # Run pose detection
-                results = self.model(frame)
-
-                # Draw pose estimation with bones on the frame
-                annotated_frame = draw_pose_estimation(frame, results)
+                if self.use_mediapipe:
+                    # Convert BGR to RGB for MediaPipe
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    # Run MediaPipe pose detection
+                    pose_results = self.pose.process(rgb_frame)
+                    # Draw pose estimation on the frame
+                    annotated_frame = draw_mediapipe_pose_estimation(frame, pose_results)
+                else:
+                    # Run pose detection
+                    results = self.model(frame)
+                    # Draw pose estimation with bones on the frame
+                    annotated_frame = draw_pose_estimation(frame, results)
 
                 # Show the annotated frame
                 cv2.imshow("video", annotated_frame)
@@ -167,11 +194,18 @@ class CameraPoseProcessor:
                 print(f"Failed to load image {image_path}")
                 continue
 
-            # Run pose detection
-            results = self.model(frame)
-
-            # Draw pose estimation with bones on the frame
-            annotated_frame = draw_pose_estimation(frame, results)
+            if self.use_mediapipe:
+                # Convert BGR to RGB for MediaPipe
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                # Run MediaPipe pose detection
+                pose_results = self.pose.process(rgb_frame)
+                # Draw pose estimation on the frame
+                annotated_frame = draw_mediapipe_pose_estimation(frame, pose_results)
+            else:
+                # Run pose detection
+                results = self.model(frame)
+                # Draw pose estimation with bones on the frame
+                annotated_frame = draw_pose_estimation(frame, results)
 
             if display_available:
                 # Show the annotated frame
@@ -240,10 +274,15 @@ def main():
         nargs='+',
         help="List of image files to process",
     )
+    parser.add_argument(
+        "--mediapipe",
+        action="store_true",
+        help="Use MediaPipe for pose detection instead of YOLO",
+    )
 
     args = parser.parse_args()
 
-    processor = CameraPoseProcessor(args.config, args.model, args.height)
+    processor = CameraPoseProcessor(args.config, args.model, args.height, args.mediapipe)
 
     if args.video:
         processor.run_video_loop(args.video)
