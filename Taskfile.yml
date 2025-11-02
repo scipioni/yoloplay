@@ -13,5 +13,8 @@ tasks:
 
   cli:
     cmds:
+      - xhost +local:docker
+      - mkdir -p runtime
+      - touch runtime/bash_history
       - docker compose run --rm yoloplay
     silent: true

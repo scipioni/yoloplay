@@ -19,6 +19,8 @@ services:
       - /home/${USER:-root}/.Xauthority:/tmp/.docker.xauth:rw
       # Mount camera device if needed
       - /dev/video0:/dev/video0
+      # history
+      - ./runtime/bash_history:/root/.bash_history
     working_dir: /workspace/yoloplay
     stdin_open: true
     tty: true
