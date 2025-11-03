@@ -9,6 +9,7 @@ from typing import Optional
 import cv2
 
 from .detectors import PoseDetector, YOLOPoseDetector, MediaPipePoseDetector
+from .fall_detector import FallDetector, YOLOFallDetector, MediaPipeFallDetector
 from .frame_providers import (
     FrameProvider,
     CameraFrameProvider,
@@ -24,18 +25,20 @@ class PoseProcessor:
     Main processor class that combines a pose detector with a frame provider.
     """
 
-    def __init__(self, detector: PoseDetector, frame_provider: FrameProvider):
+    def __init__(self, detector: PoseDetector, frame_provider: FrameProvider, fall_detector: Optional[FallDetector] = None):
         """
         Initialize the pose processor.
 
         Args:
             detector: Pose detector instance (YOLO or MediaPipe)
             frame_provider: Frame provider instance (camera, video, or images)
+            fall_detector: Optional fall detector instance
         """
         self.detector = detector
         self.frame_provider = frame_provider
+        self.fall_detector = fall_detector
         self.display_available = self._check_display_available()
-        
+
         # FPS tracking
         self.prev_frame_time = 0.0
         self.fps = 0.0
@@ -92,8 +95,51 @@ class PoseProcessor:
                 # Detect pose
                 results = self.detector.detect(frame)
 
+                # Detect falls if fall detector is enabled
+                fall_detected = False
+                fall_confidence = 0.0
+                if self.fall_detector is not None:
+                    if isinstance(self.detector, YOLOPoseDetector):
+                        # Extract keypoints from YOLO results
+                        for r in results:
+                            if hasattr(r, "keypoints") and r.keypoints is not None:
+                                keypoints = r.keypoints.data
+                                fall_detected, fall_confidence = self.fall_detector.detect_fall(keypoints)
+                                break  # Process only first person for now
+                    elif isinstance(self.detector, MediaPipePoseDetector):
+                        # Use MediaPipe results directly
+                        if results and results.pose_landmarks:
+                            fall_detected, fall_confidence = self.fall_detector.detect_fall(results.pose_landmarks)
+
                 # Visualize results
-                annotated_frame = self.detector.visualize(frame, results)
+                annotated_frame = self.detector.visualize(frame, results, fall_detected)
+
+                # Add fall detection visualization
+                if self.fall_detector is not None:
+                    if fall_detected:
+                        # Add red alert text
+                        cv2.putText(
+                            annotated_frame,
+                            f"FALL DETECTED! ({fall_confidence:.2f})",
+                            (10, 90),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1.0,
+                            (0, 0, 255),
+                            3,
+                        )
+                        # Draw red border around frame
+                        cv2.rectangle(annotated_frame, (0, 0), (annotated_frame.shape[1], annotated_frame.shape[0]), (0, 0, 255), 10)
+                    else:
+                        # Add green status text
+                        cv2.putText(
+                            annotated_frame,
+                            "No Fall Detected",
+                            (10, 90),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0, 255, 0),
+                            2,
+                        )
 
                 # Display the frame if display is available
                 if self.display_available:
@@ -267,6 +313,12 @@ def main():
         default="play",
         help="Playback mode for video/images (default: play)",
     )
+    parser.add_argument(
+        "--fall-detection",
+        action="store_true",
+        default=True,
+        help="Enable fall detection using pose keypoints",
+    )
 
     args = parser.parse_args()
 
@@ -274,9 +326,14 @@ def main():
     if args.detector == "mediapipe":
         detector = MediaPipePoseDetector()
         print("Using MediaPipe pose detector")
+        fall_detector = MediaPipeFallDetector() if args.fall_detection else None
     else:
         detector = YOLOPoseDetector(args.model)
         print(f"Using YOLO pose detector with model: {args.model}")
+        fall_detector = YOLOFallDetector() if args.fall_detection else None
+
+    if args.fall_detection:
+        print("Fall detection enabled")
 
     # Create frame provider based on input source
     playback_mode = PlaybackMode.PLAY if args.mode == "play" else PlaybackMode.STEP
@@ -298,7 +355,7 @@ def main():
         print(f"Using camera index: {camera_index}")
 
     # Create processor and run
-    processor = PoseProcessor(detector, frame_provider)
+    processor = PoseProcessor(detector, frame_provider, fall_detector)
     processor.run()
 
 

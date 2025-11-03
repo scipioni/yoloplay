@@ -26,13 +26,14 @@ class PoseDetector(ABC):
         pass
 
     @abstractmethod
-    def visualize(self, frame: np.ndarray, results: Any) -> np.ndarray:
+    def visualize(self, frame: np.ndarray, results: Any, fall_detected: bool = False) -> np.ndarray:
         """
         Visualize detection results on the frame.
 
         Args:
             frame: Input frame (BGR format)
             results: Detection results from detect()
+            fall_detected: Whether a fall was detected (affects visualization colors)
 
         Returns:
             Annotated frame with pose visualization
@@ -84,13 +85,14 @@ class YOLOPoseDetector(PoseDetector):
         """
         return self.model(frame)
 
-    def visualize(self, frame: np.ndarray, results: Any) -> np.ndarray:
+    def visualize(self, frame: np.ndarray, results: Any, fall_detected: bool = False) -> np.ndarray:
         """
         Visualize YOLO pose detection results.
 
         Args:
             frame: Input frame (BGR format)
             results: YOLO results object
+            fall_detected: Whether a fall was detected (affects visualization colors)
 
         Returns:
             Annotated frame with pose keypoints and skeleton
@@ -99,8 +101,22 @@ class YOLOPoseDetector(PoseDetector):
 
         # Process results
         for r in results:
-            # Plot boxes and poses on the frame
-            annotated_frame = r.plot()
+            # Custom plotting to control bounding box colors
+            if hasattr(r, "boxes") and r.boxes is not None:
+                # Draw bounding boxes with red color if fall detected
+                for box in r.boxes:
+                    if fall_detected:
+                        # Red bounding box for fall
+                        cv2.rectangle(annotated_frame,
+                                    (int(box.xyxy[0][0]), int(box.xyxy[0][1])),
+                                    (int(box.xyxy[0][2]), int(box.xyxy[0][3])),
+                                    (0, 0, 255), 3)
+                    else:
+                        # Default green bounding box
+                        cv2.rectangle(annotated_frame,
+                                    (int(box.xyxy[0][0]), int(box.xyxy[0][1])),
+                                    (int(box.xyxy[0][2]), int(box.xyxy[0][3])),
+                                    (0, 255, 0), 3)
 
             # Draw skeleton if keypoints are available
             if hasattr(r, "keypoints") and r.keypoints is not None:
@@ -118,12 +134,12 @@ class YOLOPoseDetector(PoseDetector):
                             conf1 = person_kpts[sk[0] - 1][2]
                             conf2 = person_kpts[sk[1] - 1][2]
 
-                            if (conf1 > 0.5 and conf2 > 0.5 and 
-                                pos1[0] > 0 and pos1[1] > 0 and 
+                            if (conf1 > 0.5 and conf2 > 0.5 and
+                                pos1[0] > 0 and pos1[1] > 0 and
                                 pos2[0] > 0 and pos2[1] > 0):
                                 # Draw the bone (line between keypoints)
                                 color = self.pose_palette[i]
-                                cv2.line(annotated_frame, pos1, pos2, color, 
+                                cv2.line(annotated_frame, pos1, pos2, color,
                                         thickness=2, lineType=cv2.LINE_AA)
 
         return annotated_frame
@@ -172,13 +188,14 @@ class MediaPipePoseDetector(PoseDetector):
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return self.pose.process(rgb_frame)
 
-    def visualize(self, frame: np.ndarray, results: Any) -> np.ndarray:
+    def visualize(self, frame: np.ndarray, results: Any, fall_detected: bool = False) -> np.ndarray:
         """
         Visualize MediaPipe pose detection results.
 
         Args:
             frame: Input frame (BGR format)
             results: MediaPipe pose results object
+            fall_detected: Whether a fall was detected (affects visualization colors)
 
         Returns:
             Annotated frame with pose landmarks and connections
@@ -186,7 +203,24 @@ class MediaPipePoseDetector(PoseDetector):
         annotated_frame = frame.copy()
 
         if results.pose_landmarks:
-            # Draw pose landmarks and connections
+            # Calculate bounding box from pose landmarks
+            x_coords = [landmark.x for landmark in results.pose_landmarks.landmark]
+            y_coords = [landmark.y for landmark in results.pose_landmarks.landmark]
+
+            # Convert normalized coordinates to pixel coordinates
+            h, w, _ = frame.shape
+            x_min = int(min(x_coords) * w)
+            x_max = int(max(x_coords) * w)
+            y_min = int(min(y_coords) * h)
+            y_max = int(max(y_coords) * h)
+
+            # Draw bounding box with red color if fall detected
+            if fall_detected:
+                cv2.rectangle(annotated_frame, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3)
+            else:
+                cv2.rectangle(annotated_frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 3)
+
+            # Draw pose landmarks and connections with default colors
             self.mp_drawing.draw_landmarks(
                 annotated_frame,
                 results.pose_landmarks,

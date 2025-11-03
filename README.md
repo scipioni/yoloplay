@@ -9,6 +9,11 @@ A flexible pose detection application supporting both YOLO and MediaPipe detecto
   - MediaPipe Pose detection
   - Extensible detector architecture for adding new detectors
 
+- **Fall Detection:**
+  - Real-time fall detection using pose keypoints
+  - Support for both YOLO and MediaPipe detectors
+  - Visual alerts and confidence scoring
+
 - **Flexible Input Sources:**
   - Real-time camera input
   - Video file processing with play/pause/step controls
@@ -88,6 +93,7 @@ Options:
   --video PATH                 Path to video file
   --images PATH [PATH ...]     List of image files
   --mode {play,step}           Playback mode for video/images (default: play)
+  --fall-detection             Enable fall detection using pose keypoints
 ```
 
 ### Examples
@@ -100,6 +106,16 @@ yoloplay --camera 0
 **Video with step-through mode:**
 ```bash
 yoloplay --video data/fall.webm --mode step
+```
+
+**Video with fall detection:**
+```bash
+yoloplay --video data/fall.webm --fall-detection
+```
+
+**Camera with MediaPipe and fall detection:**
+```bash
+yoloplay --detector mediapipe --camera 0 --fall-detection
 ```
 
 **Images with MediaPipe detector:**
@@ -142,6 +158,8 @@ You can also use the library programmatically:
 from yoloplay import (
     YOLOPoseDetector,
     MediaPipePoseDetector,
+    YOLOFallDetector,
+    MediaPipeFallDetector,
     CameraFrameProvider,
     VideoFrameProvider,
     RTSPFrameProvider,
@@ -164,8 +182,11 @@ frame_provider = CameraFrameProvider(camera_index=0)
 # or
 frame_provider = ImageFrameProvider(["img1.jpg", "img2.jpg"], mode=PlaybackMode.PLAY)
 
+# Create fall detector (optional)
+fall_detector = YOLOFallDetector()  # or MediaPipeFallDetector()
+
 # Create processor and run
-processor = PoseProcessor(detector, frame_provider)
+processor = PoseProcessor(detector, frame_provider, fall_detector)
 processor.run()
 ```
 
@@ -185,6 +206,20 @@ class MyCustomDetector(PoseDetector):
     
     def visualize(self, frame, results):
         # Your visualization logic
+        pass
+```
+
+### Adding a New Fall Detector
+
+Create a new class that inherits from [`FallDetector`](yoloplay/fall_detector.py:8):
+
+```python
+from yoloplay.fall_detector import FallDetector
+
+class MyCustomFallDetector(FallDetector):
+    def detect_fall(self, keypoints):
+        # Your custom fall detection logic
+        # Return (is_fallen, confidence)
         pass
 ```
 
