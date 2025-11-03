@@ -1,18 +1,37 @@
 """
 Fall detection module using pose keypoints to detect fallen persons.
+
+Enhanced with camera-aware multi-criteria detection including:
+- Body orientation analysis
+- Aspect ratio checking
+- Keypoint distribution analysis
+- Adaptive thresholds based on camera parameters
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple, Dict
 
 import numpy as np
+
+try:
+    from .camera_config import CameraConfig
+    from .perspective import (
+        get_adaptive_thresholds,
+        calculate_body_orientation,
+        calculate_aspect_ratio,
+        calculate_keypoint_distribution,
+    )
+    PERSPECTIVE_AVAILABLE = True
+except ImportError:
+    PERSPECTIVE_AVAILABLE = False
+    CameraConfig = None
 
 
 class FallDetector(ABC):
     """Abstract base class for fall detectors."""
 
     @abstractmethod
-    def detect_fall(self, keypoints: np.ndarray) -> Tuple[bool, float]:
+    def detect_fall(self, keypoints: Any) -> Tuple[bool, float, Optional[Dict]]:
         """
         Detect if a person has fallen based on pose keypoints.
 
@@ -20,13 +39,21 @@ class FallDetector(ABC):
             keypoints: Pose keypoints array (shape depends on implementation)
 
         Returns:
-            Tuple of (is_fallen, confidence) where is_fallen is True if fall detected
+            Tuple of (is_fallen, confidence, details) where:
+            - is_fallen: True if fall detected
+            - confidence: Detection confidence (0-1)
+            - details: Optional dict with detection criteria scores
         """
         pass
 
 
 class YOLOFallDetector(FallDetector):
-    """Fall detector implementation for YOLO pose keypoints."""
+    """
+    Fall detector implementation for YOLO pose keypoints.
+    
+    Supports both simple detection (backward compatible) and advanced
+    camera-aware multi-criteria detection when CameraConfig is provided.
+    """
 
     # COCO keypoint indices
     NOSE = 0
@@ -47,50 +74,192 @@ class YOLOFallDetector(FallDetector):
     LEFT_ANKLE = 15
     RIGHT_ANKLE = 16
 
-    def detect_fall(self, keypoints: np.ndarray) -> Tuple[bool, float]:
+    def __init__(
+        self,
+        camera_config: Optional["CameraConfig"] = None,
+        confidence_threshold: float = 0.65
+    ):
         """
-        Detect fall using YOLO keypoints.
+        Initialize YOLO fall detector.
+        
+        Args:
+            camera_config: Optional camera configuration for perspective-aware detection
+            confidence_threshold: Minimum confidence for fall detection (0-1)
+        """
+        self.camera_config = camera_config
+        self.confidence_threshold = confidence_threshold
+        self.use_advanced_detection = camera_config is not None and PERSPECTIVE_AVAILABLE
+        
+        # Criterion weights for multi-criteria fusion
+        self.weights = {
+            "orientation": 0.30,
+            "aspect_ratio": 0.25,
+            "height_check": 0.25,
+            "distribution": 0.20,
+        }
 
-        Logic: Check if the person is lying down by comparing vertical positions
-        of head (nose) and feet (ankles). If the difference is small, likely fallen.
+    def detect_fall(
+        self,
+        keypoints: np.ndarray
+    ) -> Tuple[bool, float, Optional[Dict]]:
+        """
+        Detect fall using YOLO keypoints with multi-criteria analysis.
 
         Args:
             keypoints: YOLO keypoints array (num_persons, 17, 3) - x, y, conf
 
         Returns:
-            Tuple of (is_fallen, confidence)
+            Tuple of (is_fallen, confidence, details)
         """
         if keypoints is None or len(keypoints) == 0:
-            return False, 0.0
+            return False, 0.0, None
 
-        # Process each person detected
+        # Process each person detected (return first fall detected)
         for person_kpts in keypoints:
-            # Get key positions with confidence check
-            nose = person_kpts[self.NOSE]
-            left_ankle = person_kpts[self.LEFT_ANKLE]
-            right_ankle = person_kpts[self.RIGHT_ANKLE]
+            if self.use_advanced_detection:
+                is_fallen, confidence, details = self._detect_fall_advanced(person_kpts)
+            else:
+                is_fallen, confidence, details = self._detect_fall_simple(person_kpts)
+            
+            if is_fallen:
+                return is_fallen, confidence, details
 
-            # Check confidence
-            if nose[2] < 0.5 or left_ankle[2] < 0.5 or right_ankle[2] < 0.5:
-                continue
+        return False, 0.0, None
 
-            # Calculate vertical positions
+    def _detect_fall_simple(
+        self,
+        keypoints: np.ndarray
+    ) -> Tuple[bool, float, Optional[Dict]]:
+        """
+        Simple fall detection (legacy/backward compatible).
+        
+        Args:
+            keypoints: Single person keypoints (17, 3)
+            
+        Returns:
+            Tuple of (is_fallen, confidence, details)
+        """
+        # Get key positions with confidence check
+        nose = keypoints[self.NOSE]
+        left_ankle = keypoints[self.LEFT_ANKLE]
+        right_ankle = keypoints[self.RIGHT_ANKLE]
+
+        # Check confidence
+        if nose[2] < 0.5 or (left_ankle[2] < 0.5 and right_ankle[2] < 0.5):
+            return False, 0.0, None
+
+        # Calculate vertical positions
+        head_y = nose[1]
+        feet_y = max(left_ankle[1], right_ankle[1])  # Use higher ankle
+
+        # If head is below feet or very close vertically, likely fallen
+        vertical_diff = abs(head_y - feet_y)
+        height_threshold = 50  # pixels, adjust based on image size
+
+        if vertical_diff < height_threshold:
+            confidence = 1.0 - (vertical_diff / height_threshold)
+            details = {
+                "method": "simple",
+                "vertical_diff": float(vertical_diff),
+                "threshold": height_threshold,
+            }
+            return True, min(confidence, 1.0), details
+
+        return False, 0.0, None
+
+    def _detect_fall_advanced(
+        self,
+        keypoints: np.ndarray
+    ) -> Tuple[bool, float, Optional[Dict]]:
+        """
+        Advanced multi-criteria fall detection with camera awareness.
+        
+        Args:
+            keypoints: Single person keypoints (17, 3)
+            
+        Returns:
+            Tuple of (is_fallen, confidence, details)
+        """
+        # Get adaptive thresholds based on camera config
+        thresholds = get_adaptive_thresholds(keypoints, self.camera_config)
+        
+        # Criterion 1: Body Orientation
+        orientation_angle = calculate_body_orientation(keypoints, self.camera_config)
+        orientation_score = min(orientation_angle / 90.0, 1.0)  # 0=vertical, 1=horizontal
+        
+        # Criterion 2: Aspect Ratio
+        aspect_ratio = calculate_aspect_ratio(keypoints)
+        # Map to score: <0.6 = standing (0), 1.5+ = fallen (1)
+        if aspect_ratio < 0.6:
+            aspect_score = 0.0
+        elif aspect_ratio > 1.5:
+            aspect_score = 1.0
+        else:
+            aspect_score = (aspect_ratio - 0.6) / 0.9  # Linear interpolation
+        
+        # Criterion 3: Vertical Height Check
+        nose = keypoints[self.NOSE]
+        left_ankle = keypoints[self.LEFT_ANKLE]
+        right_ankle = keypoints[self.RIGHT_ANKLE]
+        
+        if nose[2] > 0.3 and max(left_ankle[2], right_ankle[2]) > 0.3:
             head_y = nose[1]
-            feet_y = max(left_ankle[1], right_ankle[1])  # Use higher ankle
-
-            # If head is below feet or very close vertically, likely fallen
+            feet_y = max(left_ankle[1], right_ankle[1])
             vertical_diff = abs(head_y - feet_y)
-            height_threshold = 50  # pixels, adjust based on image size
-
+            
+            height_threshold = thresholds["height_threshold"]
             if vertical_diff < height_threshold:
-                confidence = 1.0 - (vertical_diff / height_threshold)
-                return True, min(confidence, 1.0)
-
-        return False, 0.0
+                height_score = 1.0 - (vertical_diff / height_threshold)
+            else:
+                height_score = 0.0
+        else:
+            height_score = 0.0
+        
+        # Criterion 4: Keypoint Distribution
+        distribution = calculate_keypoint_distribution(keypoints)
+        spread_ratio = distribution["spread_ratio"]
+        # High spread_ratio (>1.5) indicates horizontal spread (fallen)
+        if spread_ratio > 1.5:
+            distribution_score = min((spread_ratio - 1.0) / 1.5, 1.0)
+        else:
+            distribution_score = 0.0
+        
+        # Weighted fusion of criteria
+        fused_confidence = (
+            self.weights["orientation"] * orientation_score +
+            self.weights["aspect_ratio"] * aspect_score +
+            self.weights["height_check"] * height_score +
+            self.weights["distribution"] * distribution_score
+        )
+        
+        # Decision
+        is_fallen = fused_confidence >= self.confidence_threshold
+        
+        # Detailed results
+        details = {
+            "method": "advanced",
+            "fused_confidence": float(fused_confidence),
+            "orientation_angle": float(orientation_angle),
+            "orientation_score": float(orientation_score),
+            "aspect_ratio": float(aspect_ratio),
+            "aspect_score": float(aspect_score),
+            "height_score": float(height_score),
+            "distribution_score": float(distribution_score),
+            "person_distance": float(thresholds["person_distance"]),
+            "adaptive_threshold": float(thresholds["height_threshold"]),
+            "weights": self.weights,
+        }
+        
+        return is_fallen, float(fused_confidence), details
 
 
 class MediaPipeFallDetector(FallDetector):
-    """Fall detector implementation for MediaPipe pose landmarks."""
+    """
+    Fall detector implementation for MediaPipe pose landmarks.
+    
+    Supports both simple detection (backward compatible) and advanced
+    camera-aware multi-criteria detection when CameraConfig is provided.
+    """
 
     # MediaPipe pose landmark indices
     NOSE = 0
@@ -103,22 +272,57 @@ class MediaPipeFallDetector(FallDetector):
     LEFT_ANKLE = 27
     RIGHT_ANKLE = 28
 
-    def detect_fall(self, landmarks) -> Tuple[bool, float]:
+    def __init__(
+        self,
+        camera_config: Optional["CameraConfig"] = None,
+        confidence_threshold: float = 0.65
+    ):
+        """
+        Initialize MediaPipe fall detector.
+        
+        Args:
+            camera_config: Optional camera configuration for perspective-aware detection
+            confidence_threshold: Minimum confidence for fall detection (0-1)
+        """
+        self.camera_config = camera_config
+        self.confidence_threshold = confidence_threshold
+        self.use_advanced_detection = camera_config is not None and PERSPECTIVE_AVAILABLE
+        
+        # Criterion weights for multi-criteria fusion
+        self.weights = {
+            "orientation": 0.35,
+            "aspect_ratio": 0.30,
+            "height_check": 0.35,
+        }
+
+    def detect_fall(self, landmarks: Any) -> Tuple[bool, float, Optional[Dict]]:
         """
         Detect fall using MediaPipe landmarks.
-
-        Logic: Check body orientation by comparing shoulder and hip positions,
-        and vertical distance between head and feet.
 
         Args:
             landmarks: MediaPipe pose landmarks object
 
         Returns:
-            Tuple of (is_fallen, confidence)
+            Tuple of (is_fallen, confidence, details)
         """
         if not landmarks:
-            return False, 0.0
+            return False, 0.0, None
 
+        if self.use_advanced_detection:
+            return self._detect_fall_advanced(landmarks)
+        else:
+            return self._detect_fall_simple(landmarks)
+
+    def _detect_fall_simple(self, landmarks: Any) -> Tuple[bool, float, Optional[Dict]]:
+        """
+        Simple fall detection (legacy/backward compatible).
+        
+        Args:
+            landmarks: MediaPipe pose landmarks
+            
+        Returns:
+            Tuple of (is_fallen, confidence, details)
+        """
         # Extract key points
         nose = landmarks.landmark[self.NOSE]
         left_shoulder = landmarks.landmark[self.LEFT_SHOULDER]
@@ -145,6 +349,106 @@ class MediaPipeFallDetector(FallDetector):
 
         if body_tilt < tilt_threshold and head_to_feet < height_threshold:
             confidence = 1.0 - max(body_tilt / tilt_threshold, head_to_feet / height_threshold)
-            return True, min(confidence, 1.0)
+            details = {
+                "method": "simple",
+                "body_tilt": float(body_tilt),
+                "head_to_feet": float(head_to_feet),
+            }
+            return True, min(confidence, 1.0), details
 
-        return False, 0.0
+        return False, 0.0, None
+
+    def _detect_fall_advanced(self, landmarks: Any) -> Tuple[bool, float, Optional[Dict]]:
+        """
+        Advanced multi-criteria fall detection with camera awareness.
+        
+        Args:
+            landmarks: MediaPipe pose landmarks
+            
+        Returns:
+            Tuple of (is_fallen, confidence, details)
+        """
+        # Convert MediaPipe landmarks to numpy array for perspective calculations
+        keypoints_np = self._landmarks_to_numpy(landmarks)
+        
+        # Get adaptive thresholds
+        thresholds = get_adaptive_thresholds(keypoints_np, self.camera_config)
+        
+        # Criterion 1: Body Orientation (using MediaPipe normalized coords)
+        left_shoulder = landmarks.landmark[self.LEFT_SHOULDER]
+        right_shoulder = landmarks.landmark[self.RIGHT_SHOULDER]
+        left_hip = landmarks.landmark[self.LEFT_HIP]
+        right_hip = landmarks.landmark[self.RIGHT_HIP]
+        
+        shoulder_mid_y = (left_shoulder.y + right_shoulder.y) / 2
+        hip_mid_y = (left_hip.y + right_hip.y) / 2
+        body_vertical_span = abs(shoulder_mid_y - hip_mid_y)
+        
+        # Map to orientation score (small span = horizontal body)
+        orientation_score = 1.0 - min(body_vertical_span / 0.3, 1.0)
+        
+        # Criterion 2: Aspect Ratio
+        aspect_ratio = calculate_aspect_ratio(keypoints_np)
+        if aspect_ratio < 0.6:
+            aspect_score = 0.0
+        elif aspect_ratio > 1.5:
+            aspect_score = 1.0
+        else:
+            aspect_score = (aspect_ratio - 0.6) / 0.9
+        
+        # Criterion 3: Height Check (head to feet distance)
+        nose = landmarks.landmark[self.NOSE]
+        left_ankle = landmarks.landmark[self.LEFT_ANKLE]
+        right_ankle = landmarks.landmark[self.RIGHT_ANKLE]
+        
+        ankle_y = (left_ankle.y + right_ankle.y) / 2
+        head_to_feet = abs(nose.y - ankle_y)
+        
+        # Normalized coordinate threshold (adjusted for camera)
+        height_threshold_norm = 0.4
+        if head_to_feet < height_threshold_norm:
+            height_score = 1.0 - (head_to_feet / height_threshold_norm)
+        else:
+            height_score = 0.0
+        
+        # Weighted fusion
+        fused_confidence = (
+            self.weights["orientation"] * orientation_score +
+            self.weights["aspect_ratio"] * aspect_score +
+            self.weights["height_check"] * height_score
+        )
+        
+        # Decision
+        is_fallen = fused_confidence >= self.confidence_threshold
+        
+        # Detailed results
+        details = {
+            "method": "advanced",
+            "fused_confidence": float(fused_confidence),
+            "orientation_score": float(orientation_score),
+            "aspect_ratio": float(aspect_ratio),
+            "aspect_score": float(aspect_score),
+            "height_score": float(height_score),
+            "person_distance": float(thresholds["person_distance"]),
+            "weights": self.weights,
+        }
+        
+        return is_fallen, float(fused_confidence), details
+
+    def _landmarks_to_numpy(self, landmarks: Any) -> np.ndarray:
+        """
+        Convert MediaPipe landmarks to numpy array format.
+        
+        Args:
+            landmarks: MediaPipe pose landmarks
+            
+        Returns:
+            Numpy array (33, 3) with x, y, confidence
+        """
+        # MediaPipe has 33 landmarks
+        keypoints = np.zeros((33, 3))
+        
+        for i, landmark in enumerate(landmarks.landmark):
+            keypoints[i] = [landmark.x, landmark.y, landmark.visibility]
+        
+        return keypoints

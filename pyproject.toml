@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yoloplay"
-version = "0.1.0"
-description = "yolo experiments"
+version = "0.2.0"
+description = "Pose detection with camera-aware fall detection using YOLO and MediaPipe"
 readme = "README.md"
 requires-python = ">=3.7"
 authors = [

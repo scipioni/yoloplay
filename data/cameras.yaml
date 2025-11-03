@@ -1,0 +1,103 @@
+# Camera Configuration Examples
+# 
+# This file contains example camera configurations for different setups.
+# Copy and modify according to your actual camera parameters.
+
+cameras:
+  # Ceiling-mounted camera with high viewing angle
+  ceiling_camera:
+    name: "Ceiling Camera - Main Hall"
+    location: "Building A - Main Entrance"
+    height_meters: 2.8
+    tilt_angle_degrees: 60
+    horizontal_fov_degrees: 90
+    vertical_fov_degrees: 60
+    image_width: 1920
+    image_height: 1080
+    calibration_date: "2025-11-03"
+    calibrated_by: "System Administrator"
+    calibration_method: "Physical measurement"
+
+  # Eye-level camera with horizontal view
+  eye_level_camera:
+    name: "Eye Level Camera - Doorway"
+    location: "Building A - Main Door"
+    height_meters: 1.6
+    tilt_angle_degrees: 0
+    horizontal_fov_degrees: 78
+    vertical_fov_degrees: 52
+    image_width: 1280
+    image_height: 720
+    calibration_date: "2025-11-03"
+    calibrated_by: "System Administrator"
+    calibration_method: "Manufacturer specifications"
+
+  # Wall-mounted camera with medium angle
+  wall_camera:
+    name: "Wall Camera - Patient Room"
+    location: "Room 201"
+    height_meters: 2.2
+    tilt_angle_degrees: 30
+    horizontal_fov_degrees: 110
+    vertical_fov_degrees: 70
+    image_width: 1920
+    image_height: 1080
+    calibration_date: "2025-11-03"
+    calibrated_by: "System Administrator"
+    calibration_method: "Physical measurement"
+
+  # Corner camera with diagonal view
+  corner_camera:
+    name: "Corner Camera - Office"
+    location: "Office 305"
+    height_meters: 2.4
+    tilt_angle_degrees: 40
+    horizontal_fov_degrees: 120
+    vertical_fov_degrees: 80
+    image_width: 1920
+    image_height: 1080
+    calibration_date: "2025-11-03"
+    calibrated_by: "System Administrator"
+    calibration_method: "Physical measurement"
+
+  # Corridor camera
+  corridor_camera:
+    name: "Corridor Monitoring Camera"
+    location: "Building A - 2nd Floor Corridor"
+    height_meters: 2.5
+    tilt_angle_degrees: 35
+    horizontal_fov_degrees: 100
+    vertical_fov_degrees: 65
+    image_width: 1920
+    image_height: 1080
+    calibration_date: "2025-11-03"
+    calibrated_by: "System Administrator"
+    calibration_method: "Physical measurement with reference object"
+
+
+  office:
+    name: "Wall Camera - Office"
+    location: "ingegno"
+    height_meters: 2.2
+    tilt_angle_degrees: 30
+    horizontal_fov_degrees: 110
+    vertical_fov_degrees: 70
+    image_width: 1920
+    image_height: 1080
+    calibration_date: "2025-11-03"
+    calibrated_by: "System Administrator"
+    calibration_method: "Physical measurement"
+
+
+  fallwebm:
+    name: "Lateral camera"
+    location: "ingegno"
+    height_meters: 1.5
+    tilt_angle_degrees: 0
+    horizontal_fov_degrees: 110
+    vertical_fov_degrees: 70
+    image_width: 1280
+    image_height: 720
+    calibration_date: "2025-11-03"
+    calibrated_by: "System Administrator"
+    calibration_method: "Physical measurement"
