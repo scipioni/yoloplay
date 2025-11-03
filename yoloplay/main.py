@@ -13,6 +13,7 @@ from .frame_providers import (
     FrameProvider,
     CameraFrameProvider,
     VideoFrameProvider,
+    RTSPFrameProvider,
     ImageFrameProvider,
     PlaybackMode,
 )
@@ -281,8 +282,12 @@ def main():
     playback_mode = PlaybackMode.PLAY if args.mode == "play" else PlaybackMode.STEP
 
     if args.video:
-        frame_provider = VideoFrameProvider(args.video, mode=playback_mode)
-        print(f"Processing video: {args.video}")
+        if args.video.startswith("rtsp://"):
+            frame_provider = RTSPFrameProvider(args.video)
+            print(f"Processing RTSP stream: {args.video}")
+        else:
+            frame_provider = VideoFrameProvider(args.video, mode=playback_mode)
+            print(f"Processing video: {args.video}")
     elif args.images:
         frame_provider = ImageFrameProvider(args.images, mode=playback_mode)
         print(f"Processing {len(args.images)} images")

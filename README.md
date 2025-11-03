@@ -12,6 +12,7 @@ A flexible pose detection application supporting both YOLO and MediaPipe detecto
 - **Flexible Input Sources:**
   - Real-time camera input
   - Video file processing with play/pause/step controls
+  - RTSP stream processing for live video feeds
   - Image file processing with navigation controls
 
 - **Playback Controls:**
@@ -37,7 +38,8 @@ The application is built on two main class hierarchies:
 - [`FrameProvider`](yoloplay/frame_providers.py:16) (abstract base class)
   - [`CameraFrameProvider`](yoloplay/frame_providers.py:50) - Real-time camera input
   - [`VideoFrameProvider`](yoloplay/frame_providers.py:70) - Video file with playback controls
-  - [`ImageFrameProvider`](yoloplay/frame_providers.py:149) - Image sequence with navigation
+  - [`RTSPFrameProvider`](yoloplay/frame_providers.py:149) - RTSP stream processing
+  - [`ImageFrameProvider`](yoloplay/frame_providers.py:170) - Image sequence with navigation
 
 ## Installation
 
@@ -58,6 +60,9 @@ docker compose run --rm yoloplay python -m yoloplay.main
 
 # Run with video file
 docker compose run --rm yoloplay python -m yoloplay.main --video data/fall.webm
+
+# Run with RTSP stream
+docker compose run --rm yoloplay python -m yoloplay.main --video rtsp://example.com/stream
 
 # Run with MediaPipe detector
 docker compose run --rm yoloplay python -m yoloplay.main --detector mediapipe
@@ -107,6 +112,11 @@ yoloplay --detector mediapipe --images img1.jpg img2.jpg img3.jpg
 yoloplay --video data/fall.webm --mode play
 ```
 
+**RTSP stream with MediaPipe detector:**
+```bash
+yoloplay --detector mediapipe --video rtsp://192.168.1.100:554/stream
+```
+
 ### Keyboard Controls
 
 **Camera Mode:**
@@ -134,6 +144,7 @@ from yoloplay import (
     MediaPipePoseDetector,
     CameraFrameProvider,
     VideoFrameProvider,
+    RTSPFrameProvider,
     ImageFrameProvider,
     PoseProcessor,
     PlaybackMode,
@@ -146,6 +157,8 @@ detector = MediaPipePoseDetector()
 
 # Create a frame provider
 frame_provider = VideoFrameProvider("video.mp4", mode=PlaybackMode.STEP)
+# or
+frame_provider = RTSPFrameProvider("rtsp://example.com/stream")
 # or
 frame_provider = CameraFrameProvider(camera_index=0)
 # or

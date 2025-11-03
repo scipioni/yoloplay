@@ -166,6 +166,39 @@ class VideoFrameProvider(FrameProvider):
             self._is_opened = False
 
 
+class RTSPFrameProvider(FrameProvider):
+    """Frame provider for RTSP stream input."""
+
+    def __init__(self, rtsp_url: str):
+        """
+        Initialize RTSP frame provider.
+
+        Args:
+            rtsp_url: RTSP URL for the stream
+        """
+        super().__init__()
+        self.rtsp_url = rtsp_url
+        self.cap: Optional[cv2.VideoCapture] = None
+
+    def open(self) -> bool:
+        """Open the RTSP stream."""
+        self.cap = cv2.VideoCapture(self.rtsp_url)
+        self._is_opened = self.cap.isOpened()
+        return self._is_opened
+
+    def read(self) -> Tuple[bool, Optional[np.ndarray]]:
+        """Read a frame from the RTSP stream."""
+        if not self._is_opened or self.cap is None:
+            return False, None
+        return self.cap.read()
+
+    def release(self) -> None:
+        """Release the RTSP stream."""
+        if self.cap is not None:
+            self.cap.release()
+            self._is_opened = False
+
+
 class ImageFrameProvider(FrameProvider):
     """Frame provider for image file input with navigation controls."""
 
