@@ -244,6 +244,9 @@ class MyCustomProvider(FrameProvider):
         pass
 ```
 
-## License
+### Notes
 
-MIT
+register video
+```
+mpv rtsp://10.1.109.144:554/s0 --stream-record=office.mkv
+``` 

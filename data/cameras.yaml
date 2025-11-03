@@ -78,10 +78,10 @@ cameras:
   office:
     name: "Wall Camera - Office"
     location: "ingegno"
-    height_meters: 2.2
-    tilt_angle_degrees: 30
-    horizontal_fov_degrees: 110
-    vertical_fov_degrees: 70
+    height_meters: 2.5
+    tilt_angle_degrees: 25
+    horizontal_fov_degrees: 80
+    vertical_fov_degrees: 46
     image_width: 1920
     image_height: 1080
     calibration_date: "2025-11-03"

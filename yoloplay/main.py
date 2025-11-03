@@ -280,10 +280,16 @@ class PoseProcessor:
             Annotated frame
         """
         if fall_detected:
-            # Add red alert text
+            # Add red alert text with detection mode indicator
+            mode_indicator = ""
+            if self.fall_details and self.fall_details.get("method") == "advanced":
+                mode_indicator = " [ADV]"
+            elif self.fall_details and self.fall_details.get("method") == "simple":
+                mode_indicator = " [SIMPLE]"
+            
             cv2.putText(
                 frame,
-                f"FALL DETECTED! ({fall_confidence:.2f})",
+                f"FALL DETECTED! ({fall_confidence:.2f}){mode_indicator}",
                 (10, 90),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1.0,
@@ -306,14 +312,23 @@ class PoseProcessor:
                 
                 if details.get("method") == "advanced":
                     # Show individual criterion scores
-                    criteria_text = [
+                    criteria_text = []
+                    
+                    if "head_below_hips_score" in details:
+                        criteria_text.append(f"Head<Hips: {details.get('head_below_hips_score', 0):.2f}")
+                    
+                    criteria_text.extend([
                         f"Orientation: {details.get('orientation_score', 0):.2f}",
                         f"Aspect: {details.get('aspect_score', 0):.2f}",
                         f"Height: {details.get('height_score', 0):.2f}",
-                    ]
+                    ])
                     
                     if "distribution_score" in details:
                         criteria_text.append(f"Distrib: {details.get('distribution_score', 0):.2f}")
+                
+                elif details.get("method") == "simple" and details.get("trigger") == "head_below_hips":
+                    # Show simple mode head below hips trigger
+                    criteria_text = [f"Trigger: Head below hips"]
                     
                     for text in criteria_text:
                         cv2.putText(
@@ -339,10 +354,16 @@ class PoseProcessor:
                             1,
                         )
         else:
-            # Add green status text
+            # Add green status text with detection mode indicator
+            mode_indicator = ""
+            if self.fall_details and self.fall_details.get("method") == "advanced":
+                mode_indicator = " [ADV]"
+            elif self.fall_details and self.fall_details.get("method") == "simple":
+                mode_indicator = " [SIMPLE]"
+            
             cv2.putText(
                 frame,
-                f"No Fall ({fall_confidence:.2f})",
+                f"No Fall ({fall_confidence:.2f}){mode_indicator}",
                 (10, 90),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
