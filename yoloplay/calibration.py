@@ -2,9 +2,14 @@
 Calibration module for collecting keypoints during pose detection.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple, Optional
 import json
 import time
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+import warnings
+warnings.filterwarnings('ignore')
 
 
 class Calibration:
@@ -76,4 +81,182 @@ class Calibration:
             "total_frames": total_frames,
             "duration": duration,
             "avg_keypoints_per_frame": sum(kp["keypoints"]["count"] for kp in self.keypoints) / total_frames if total_frames > 0 else 0
+        }
+
+    def find_optimal_k(self, max_k: int = 10) -> Tuple[int, float]:
+        """
+        Find the optimal number of clusters using silhouette score.
+
+        Args:
+            max_k: Maximum number of clusters to test
+
+        Returns:
+            Tuple of (optimal_k, best_score)
+        """
+        if not self.keypoints:
+            return 1, 0.0
+
+        # Prepare data: flatten all keypoints into a single array
+        all_keypoints = []
+        for entry in self.keypoints:
+            kp_data = entry["keypoints"]["data"]
+            if isinstance(kp_data, list) and len(kp_data) > 0:
+                # Take only the first person detected in each frame
+                first_person = kp_data[0]
+                if isinstance(first_person, list) and len(first_person) > 0:
+                    # Flatten keypoints (x, y) for the first person
+                    flattened = []
+                    for kp in first_person:
+                        if isinstance(kp, list) and len(kp) >= 2:
+                            flattened.extend(kp[:2])  # Only x, y coordinates
+                    if flattened:
+                        all_keypoints.append(flattened)
+
+        if len(all_keypoints) < 2:
+            return 1, 0.0
+
+        # Convert to numpy array
+        X = np.array(all_keypoints)
+
+        # Test different k values
+        best_k = 2
+        best_score = -1
+
+        for k in range(2, min(max_k + 1, len(X))):
+            try:
+                kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                labels = kmeans.fit_predict(X)
+                score = silhouette_score(X, labels)
+                if score > best_score:
+                    best_score = score
+                    best_k = k
+            except:
+                continue
+
+        return best_k, best_score
+
+    def save_clusters(self, filename: str = "clusters.json") -> None:
+        """
+        Save clustering results to a JSON file.
+
+        Args:
+            filename: Name of the file to save cluster data to
+        """
+        if not hasattr(self, '_last_clustering_result'):
+            print("No clustering results available. Run perform_clustering() first.")
+            self.perform_clustering()
+
+        with open(filename, 'w') as f:
+            json.dump(self._last_clustering_result, f, indent=2)
+
+        # Print summary
+        result = self._last_clustering_result
+        print(f"Cluster data saved to {filename}")
+        print(f"Summary: {result['n_clusters']} clusters, silhouette score: {result['silhouette_score']:.3f}, {result['total_frames']} frames")
+
+    def load_clusters(self, filename: str = "clusters.json") -> Optional[Dict[str, Any]]:
+        """
+        Load clustering results from a JSON file.
+
+        Args:
+            filename: Name of the file to load cluster data from
+
+        Returns:
+            Dictionary containing the loaded cluster data, or None if file not found
+        """
+        try:
+            with open(filename, 'r') as f:
+                cluster_data = json.load(f)
+            self._last_clustering_result = cluster_data
+
+            # Print summary
+            print(f"Cluster data loaded from {filename}")
+            print(f"Summary: {cluster_data['n_clusters']} clusters, silhouette score: {cluster_data['silhouette_score']:.3f}, {cluster_data['total_frames']} frames")
+            return cluster_data
+        except FileNotFoundError:
+            print(f"Cluster file {filename} not found")
+            return None
+        except json.JSONDecodeError as e:
+            print(f"Error parsing cluster file: {e}")
+            return None
+
+    def perform_clustering(self, k: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Perform k-means clustering on the collected keypoints.
+
+        Args:
+            k: Number of clusters. If None, automatically determine optimal k.
+
+        Returns:
+            Dictionary containing clustering results
+        """
+        result = self._perform_clustering(k)
+        self._last_clustering_result = result  # Store for saving
+        return result
+
+    def _perform_clustering(self, k: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Internal method to perform the actual clustering logic.
+        """
+        if not self.keypoints:
+            return {"error": "No keypoints data available"}
+
+        # Prepare data - only use the first detected person per frame
+        all_keypoints = []
+        timestamps = []
+        for entry in self.keypoints:
+            kp_data = entry["keypoints"]["data"]
+            if isinstance(kp_data, list) and len(kp_data) > 0:
+                # Take only the first person detected in each frame
+                first_person = kp_data[0]
+                if len(first_person) >= 2:
+                    # Flatten keypoints (x, y) for the first person
+                    flattened = []
+                    for kp in first_person:
+                        if isinstance(kp, list) and len(kp) >= 2:
+                            flattened.extend(kp[:2])  # Only x, y coordinates
+                    if flattened:
+                        all_keypoints.append(flattened)
+                        timestamps.append(entry["timestamp"])
+
+        if len(all_keypoints) < 2:
+            return {"error": "Insufficient data for clustering"}
+
+        X = np.array(all_keypoints)
+
+        # Determine k if not provided
+        if k is None:
+            k, silhouette = self.find_optimal_k()
+        else:
+            k = min(k, len(X))
+            try:
+                kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+                labels = kmeans.fit_predict(X)
+                silhouette = silhouette_score(X, labels)
+            except:
+                silhouette = 0.0
+
+        # Perform clustering
+        kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(X)
+        centroids = kmeans.cluster_centers_
+
+        # Group data by clusters
+        clusters = {}
+        for i in range(k):
+            cluster_indices = np.where(labels == i)[0]
+            cluster_data = {
+                "centroid": centroids[i].tolist(),
+                "frames": len(cluster_indices),
+                "timestamps": [timestamps[idx] for idx in cluster_indices],
+                "keypoints": [all_keypoints[idx] for idx in cluster_indices]
+            }
+            clusters[f"cluster_{i}"] = cluster_data
+
+        return {
+            "n_clusters": k,
+            "silhouette_score": silhouette,
+            "total_frames": len(X),
+            "clusters": clusters,
+            "inertia": kmeans.inertia_
         }

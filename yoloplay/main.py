@@ -162,7 +162,8 @@ class PoseProcessor:
             if self.calibrate and self.calibration:
                 summary = self.calibration.get_summary()
                 print(f"Calibration completed: {summary}")
-                self.calibration.save_to_file()
+                #self.calibration.save_to_file()
+                self.calibration.save_clusters()
 
             # Release resources
             self.frame_provider.release()
