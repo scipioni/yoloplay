@@ -42,10 +42,12 @@ class Keypoints:
         self.source = source.lower()
         self.image_shape = image_shape
         self._keypoints = None
+        self._original_landmarks = None  # Store original MediaPipe landmarks
 
         if self.source == "yolo":
             self._normalize_yolo_keypoints(keypoints)
         elif self.source == "mediapipe":
+            self._original_landmarks = keypoints  # Store original landmarks
             self._normalize_mediapipe_keypoints(keypoints)
         else:
             raise ValueError(f"Unsupported source: {source}. Must be 'yolo' or 'mediapipe'")
@@ -95,6 +97,11 @@ class Keypoints:
     def data(self) -> np.ndarray:
         """Get the normalized keypoints array."""
         return self._keypoints
+
+    @property
+    def original_landmarks(self) -> Any:
+        """Get the original MediaPipe landmarks object."""
+        return self._original_landmarks
 
     @property
     def num_persons(self) -> int:
@@ -423,6 +430,10 @@ class MediaPipePoseDetector(PoseDetector):
         Returns:
             Annotated frame with pose landmarks and connections
         """
+        # If no pose was detected, return the original frame without visualization
+        if keypoints.original_landmarks is None:
+            return frame.copy()
+
         annotated_frame = frame.copy()
 
         # Get keypoints data (already normalized)
@@ -446,27 +457,10 @@ class MediaPipePoseDetector(PoseDetector):
             else:
                 cv2.rectangle(annotated_frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 3)
 
-            # Convert back to MediaPipe landmarks format for drawing
-            # Create a simple landmarks object for drawing
-            class FakeLandmark:
-                def __init__(self, x, y, z=0, visibility=1.0):
-                    self.x = x
-                    self.y = y
-                    self.z = z
-                    self.visibility = visibility
-
-            class FakeLandmarks:
-                def __init__(self, keypoints_data):
-                    self.landmark = []
-                    for kp in keypoints_data:
-                        self.landmark.append(FakeLandmark(kp[0], kp[1], 0, kp[2]))
-
-            fake_landmarks = FakeLandmarks(keypoints_data)
-
             # Draw pose landmarks and connections with default colors
             self.mp_drawing.draw_landmarks(
                 annotated_frame,
-                fake_landmarks,
+                keypoints.original_landmarks,
                 self.mp_pose.POSE_CONNECTIONS,
                 landmark_drawing_spec=self.mp_drawing.DrawingSpec(
                     color=(0, 255, 0), thickness=2, circle_radius=2
