@@ -77,9 +77,9 @@ class YOLOFallDetector(FallDetector):
     def __init__(
         self,
         camera_config: Optional["CameraConfig"] = None,
-        confidence_threshold: float = 0.65,
-        min_keypoints: int = 8,
-        min_keypoint_confidence: float = 0.3
+        confidence_threshold: float = 0.45,  # Lowered for better sensitivity
+        min_keypoints: int = 6,  # Lowered to allow detection with fewer keypoints
+        min_keypoint_confidence: float = 0.25  # Lowered to be more permissive
     ):
         """
         Initialize YOLO fall detector.
@@ -96,12 +96,12 @@ class YOLOFallDetector(FallDetector):
         self.min_keypoint_confidence = min_keypoint_confidence
         self.use_advanced_detection = camera_config is not None and PERSPECTIVE_AVAILABLE
         
-        # Criterion weights for multi-criteria fusion
+        # Criterion weights for multi-criteria fusion - adjusted for better fallen person detection
         self.weights = {
             "orientation": 0.30,
-            "aspect_ratio": 0.25,
+            "aspect_ratio": 0.30,  # Increased weight for aspect ratio (horizontal positioning)
             "height_check": 0.25,
-            "distribution": 0.20,
+            "distribution": 0.15,  # Slightly reduced but still important
         }
 
     def detect_fall(
@@ -195,8 +195,8 @@ class YOLOFallDetector(FallDetector):
         left_ankle = keypoints[self.LEFT_ANKLE]
         right_ankle = keypoints[self.RIGHT_ANKLE]
 
-        # Check confidence
-        if nose[2] < 0.5 or (left_ankle[2] < 0.5 and right_ankle[2] < 0.5):
+        # Check confidence - More permissive thresholds
+        if nose[2] < 0.3 or (left_ankle[2] < 0.3 and right_ankle[2] < 0.3):
             return False, 0.0, None
         
         # Check if hips have good confidence
@@ -221,7 +221,7 @@ class YOLOFallDetector(FallDetector):
         # In image coordinates, Y increases downward, so head_y > hip_y means head is lower
         if hip_y is not None and head_y > hip_y:
             # Head is below hips - very likely fallen
-            confidence = 0.9  # High confidence
+            confidence = 0.95  # Even higher confidence
             details = {
                 "method": "simple",
                 "trigger": "head_below_hips",
@@ -230,9 +230,9 @@ class YOLOFallDetector(FallDetector):
             }
             return True, confidence, details
 
-        # Check 2: Head close to feet vertically (original logic)
+        # Check 2: Head close to feet vertically (original logic) - More sensitive
         vertical_diff = abs(head_y - feet_y)
-        height_threshold = 50  # pixels, adjust based on image size
+        height_threshold = 80  # pixels, increased to be more sensitive to fallen positions
 
         if vertical_diff < height_threshold:
             confidence = 1.0 - (vertical_diff / height_threshold)
@@ -243,6 +243,21 @@ class YOLOFallDetector(FallDetector):
                 "threshold": height_threshold,
             }
             return True, min(confidence, 1.0), details
+
+        # Additional check: Body alignment that suggests horizontal position
+        if hips_visible and nose[2] > 0.3 and left_ankle[2] > 0.3 and right_ankle[2] > 0.3:
+            # Calculate the vertical spread between head and feet vs hips
+            head_feet_vertical_span = abs(head_y - feet_y)
+            # When vertical span is small, person is more likely lying down
+            if head_feet_vertical_span < height_threshold * 0.7:  # More permissive
+                confidence = 0.7  # Medium-high confidence
+                details = {
+                    "method": "simple",
+                    "trigger": "low_vertical_span",
+                    "vertical_span": float(head_feet_vertical_span),
+                    "threshold": height_threshold * 0.7,
+                }
+                return True, confidence, details
 
         return False, 0.0, None
 
@@ -295,25 +310,45 @@ class YOLOFallDetector(FallDetector):
         
         # Criterion 1: Body Orientation
         orientation_angle = calculate_body_orientation(keypoints, self.camera_config)
-        orientation_score = min(orientation_angle / 90.0, 1.0)  # 0=vertical, 1=horizontal
+        # The function returns the angle of the torso from vertical (0-180 degrees)
+        # A standing person might appear at the camera tilt angle (25°) or its complement (180°-25°=155°)
+        # A fallen person should be around 90° (horizontal)
         
-        # Criterion 2: Aspect Ratio
+        # Calculate the minimal angular distance to vertical (standing) positions
+        # The angle could be close to camera tilt or its complement (180 - tilt)
+        camera_tilt = self.camera_config.tilt_angle_degrees
+        dist_to_vertical_1 = abs(orientation_angle - camera_tilt)
+        dist_to_vertical_2 = abs(orientation_angle - (180 - camera_tilt))
+        min_dist_to_vertical = min(dist_to_vertical_1, dist_to_vertical_2)
+        
+        # If the angle is close to vertical (standing), score low
+        # If the angle is close to horizontal (90°), score high
+        if min_dist_to_vertical < 30:  # Close to vertical (standing)
+            orientation_score = 0.0
+        elif abs(orientation_angle - 90) < 30:  # Close to horizontal (fallen)
+            orientation_score = 1.0
+        else:  # Somewhere in between (leaning)
+            # Interpolate based on how close to horizontal
+            orientation_score = max(0.0, min(1.0, (abs(orientation_angle - 90) / 30.0)))
+        
+        # Criterion 2: Aspect Ratio - Adjusted for better fallen detection
         aspect_ratio = calculate_aspect_ratio(keypoints)
-        # Map to score: <0.6 = standing (0), 1.5+ = fallen (1)
-        if aspect_ratio < 0.6:
+        # Map to score: <0.7 = standing (0), 1.2+ = fallen (1) - more sensitive range
+        if aspect_ratio < 0.7:
             aspect_score = 0.0
-        elif aspect_ratio > 1.5:
+        elif aspect_ratio > 1.2:
             aspect_score = 1.0
         else:
-            aspect_score = (aspect_ratio - 0.6) / 0.9  # Linear interpolation
+            aspect_score = (aspect_ratio - 0.7) / 0.5  # Linear interpolation with narrower range
         
-        # Criterion 3: Vertical Height Check (head to feet distance)
-        if nose[2] > 0.3 and max(left_ankle[2], right_ankle[2]) > 0.3:
+        # Criterion 3: Vertical Height Check (head to feet distance) - More sensitive
+        if nose[2] > 0.25 and max(left_ankle[2], right_ankle[2]) > 0.25:  # Lowered confidence threshold
             head_y = nose[1]
             feet_y = max(left_ankle[1], right_ankle[1])
             vertical_diff = abs(head_y - feet_y)
             
-            height_threshold = thresholds["height_threshold"]
+            # Lower the threshold to make it more sensitive to fallen positions
+            height_threshold = thresholds["height_threshold"] * 1.2  # Increased by 20% to be more sensitive
             if vertical_diff < height_threshold:
                 height_score = 1.0 - (vertical_diff / height_threshold)
             else:
@@ -321,18 +356,18 @@ class YOLOFallDetector(FallDetector):
         else:
             height_score = 0.0
         
-        # Criterion 4: Keypoint Distribution
+        # Criterion 4: Keypoint Distribution - More sensitive thresholds
         distribution = calculate_keypoint_distribution(keypoints)
         spread_ratio = distribution["spread_ratio"]
-        # High spread_ratio (>1.5) indicates horizontal spread (fallen)
-        if spread_ratio > 1.5:
-            distribution_score = min((spread_ratio - 1.0) / 1.5, 1.0)
+        # High spread_ratio (>1.0) indicates horizontal spread (fallen) - Lowered threshold
+        if spread_ratio > 1.0:
+            distribution_score = min((spread_ratio - 0.5) / 1.0, 1.0)  # Adjusted for better sensitivity
         else:
             distribution_score = 0.0
         
         # If head is significantly below hips, give it strong weight
         # This overrides other criteria to some extent
-        if head_below_hips_score > 0.5:
+        if head_below_hips_score > 0.3:  # Lowered threshold for more sensitivity
             # Boost overall confidence when head is below hips
             fused_confidence = max(
                 head_below_hips_score * 0.85,  # Head below hips is 85% confidence alone
@@ -344,13 +379,20 @@ class YOLOFallDetector(FallDetector):
                 )
             )
         else:
-            # Normal weighted fusion of criteria
-            fused_confidence = (
+            # Normal weighted fusion of criteria - but make it more sensitive
+            base_fusion = (
                 self.weights["orientation"] * orientation_score +
                 self.weights["aspect_ratio"] * aspect_score +
                 self.weights["height_check"] * height_score +
                 self.weights["distribution"] * distribution_score
             )
+            
+            # If any single criterion has high score, increase sensitivity
+            max_criterion = max(orientation_score, aspect_score, height_score, distribution_score)
+            if max_criterion > 0.7:  # If any criterion is strongly indicating fall
+                fused_confidence = max(base_fusion, max_criterion * 0.7)  # Take higher of fusion or individual
+            else:
+                fused_confidence = base_fusion
         
         # Decision
         is_fallen = fused_confidence >= self.confidence_threshold

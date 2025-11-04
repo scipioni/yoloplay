@@ -4,7 +4,8 @@ Main application for pose detection with various input sources.
 
 import os
 import time
-from typing import Optional, Dict
+import json
+from typing import Optional, Dict, Any
 
 import cv2
 
@@ -120,6 +121,7 @@ class PoseProcessor:
                 fall_detected = False
                 fall_confidence = 0.0
                 self.fall_details = None
+                keypoints_data = None
                 
                 if self.fall_detector is not None:
                     if isinstance(self.detector, YOLOPoseDetector):
@@ -127,12 +129,17 @@ class PoseProcessor:
                         for r in results:
                             if hasattr(r, "keypoints") and r.keypoints is not None:
                                 keypoints = r.keypoints.data
+                                keypoints_data = keypoints
                                 fall_detected, fall_confidence, self.fall_details = self.fall_detector.detect_fall(keypoints)
                                 break  # Process only first person for now
                     elif isinstance(self.detector, MediaPipePoseDetector):
                         # Use MediaPipe results directly
                         if results and results.pose_landmarks:
                             fall_detected, fall_confidence, self.fall_details = self.fall_detector.detect_fall(results.pose_landmarks)
+                
+                # Output JSON debug information
+                if self.show_debug_info:
+                    self._output_json_debug(fall_detected, fall_confidence, keypoints_data)
 
                 # Visualize results
                 annotated_frame = self.detector.visualize(frame, results, fall_detected)
@@ -413,6 +420,96 @@ class PoseProcessor:
         except:
             # Other error, safer to assume no display
             return False
+    
+    def _output_json_debug(
+        self,
+        fall_detected: bool,
+        fall_confidence: float,
+        keypoints_data: Any
+    ) -> None:
+        """
+        Output JSON debug information to console.
+        
+        Args:
+            fall_detected: Whether fall was detected
+            fall_confidence: Detection confidence
+            keypoints_data: Raw keypoints data
+        """
+        debug_info: Dict[str, Any] = {
+            "timestamp": time.time(),
+            "fallen_state": fall_detected,
+            "confidence": float(fall_confidence),
+        }
+        
+        # Add image name if using ImageFrameProvider
+        if isinstance(self.frame_provider, ImageFrameProvider):
+            if self.frame_provider.current_index > 0:
+                current_idx = self.frame_provider.current_index - 1
+                if current_idx < len(self.frame_provider.image_paths):
+                    debug_info["image_name"] = os.path.basename(
+                        self.frame_provider.image_paths[current_idx]
+                    )
+                    debug_info["image_path"] = self.frame_provider.image_paths[current_idx]
+        
+        # Add keypoints if available
+        if keypoints_data is not None:
+            try:
+                # Convert tensor to numpy if needed
+                import numpy as np
+                if hasattr(keypoints_data, 'cpu'):
+                    kpts_np = keypoints_data.cpu().numpy()
+                else:
+                    kpts_np = keypoints_data
+                
+                # Extract first person keypoints (17, 3) - x, y, conf
+                if len(kpts_np.shape) == 3 and kpts_np.shape[0] > 0:
+                    person_kpts = kpts_np[0]
+                    # Convert to list ensuring it's JSON serializable
+                    person_kpts_list = person_kpts.tolist() if hasattr(person_kpts, 'tolist') else person_kpts
+                    debug_info["keypoints"] = {
+                        "count": int(person_kpts.shape[0]),
+                        "data": person_kpts_list,
+                        "format": "COCO (17 keypoints: x, y, confidence)"
+                    }
+            except Exception as e:
+                debug_info["keypoints_error"] = str(e)
+        
+        # Add fall detection details if available
+        if self.fall_details:
+            debug_info["detection_details"] = {
+                "method": self.fall_details.get("method"),
+                "adaptive_threshold": float(self.fall_details.get("adaptive_threshold")) if self.fall_details.get("adaptive_threshold") is not None else None,
+                "person_distance": float(self.fall_details.get("person_distance")) if self.fall_details.get("person_distance") is not None else None,
+            }
+            
+            # Add criterion scores for advanced detection
+            if self.fall_details.get("method") == "advanced":
+                debug_info["detection_details"]["criteria"] = {
+                    "fused_confidence": float(self.fall_details.get("fused_confidence")) if self.fall_details.get("fused_confidence") is not None else 0.0,
+                    "head_below_hips_score": float(self.fall_details.get("head_below_hips_score")) if self.fall_details.get("head_below_hips_score") is not None else 0.0,
+                    "orientation_score": float(self.fall_details.get("orientation_score")) if self.fall_details.get("orientation_score") is not None else 0.0,
+                    "orientation_angle": float(self.fall_details.get("orientation_angle")) if self.fall_details.get("orientation_angle") is not None else 0.0,
+                    "aspect_ratio": float(self.fall_details.get("aspect_ratio")) if self.fall_details.get("aspect_ratio") is not None else 0.0,
+                    "aspect_score": float(self.fall_details.get("aspect_score")) if self.fall_details.get("aspect_score") is not None else 0.0,
+                    "height_score": float(self.fall_details.get("height_score")) if self.fall_details.get("height_score") is not None else 0.0,
+                    "distribution_score": float(self.fall_details.get("distribution_score")) if self.fall_details.get("distribution_score") is not None else 0.0,
+                }
+            elif self.fall_details.get("method") == "simple":
+                debug_info["detection_details"]["trigger"] = self.fall_details.get("trigger")
+        
+        # Print JSON to console (convert any remaining tensors to floats/strings)
+        def serialize_tensors(obj):
+            if hasattr(obj, 'cpu'):
+                return obj.cpu().numpy().tolist()
+            elif hasattr(obj, 'item'):
+                return obj.item()
+            elif isinstance(obj, (list, tuple)):
+                return [serialize_tensors(item) for item in obj]
+            elif isinstance(obj, dict):
+                return {key: serialize_tensors(value) for key, value in obj.items()}
+            else:
+                return obj
+        print(json.dumps(serialize_tensors(debug_info), indent=2))
 
 
 def main():
@@ -567,8 +664,45 @@ def main():
             frame_provider = VideoFrameProvider(args.video, mode=playback_mode)
             print(f"Processing video: {args.video}")
     elif args.images:
-        frame_provider = ImageFrameProvider(args.images, mode=playback_mode)
-        print(f"Processing {len(args.images)} images")
+        import os
+        import glob
+        
+        # Expand directories to list of image files
+        image_paths = []
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp', '.gif'}
+        
+        for path in args.images:
+            if os.path.isdir(path):
+                # It's a directory - load all image files from it
+                print(f"DEBUG: '{path}' is a directory, scanning for images...")
+                for ext in image_extensions:
+                    pattern = os.path.join(path, f'*{ext}')
+                    found_files = glob.glob(pattern)
+                    print(f"DEBUG: Found {len(found_files)} files with extension {ext}")
+                    image_paths.extend(found_files)
+                    # Also check uppercase extensions
+                    pattern = os.path.join(path, f'*{ext.upper()}')
+                    found_files = glob.glob(pattern)
+                    print(f"DEBUG: Found {len(found_files)} files with extension {ext.upper()}")
+                    image_paths.extend(found_files)
+            elif os.path.isfile(path):
+                # It's a file - add it directly
+                print(f"DEBUG: '{path}' is a file, adding to list")
+                image_paths.append(path)
+            else:
+                print(f"WARNING: '{path}' is neither a file nor a directory, skipping")
+        
+        if not image_paths:
+            print("ERROR: No valid image files found")
+            return
+        
+        # Sort the paths for consistent ordering
+        image_paths.sort()
+        print(f"DEBUG: Total images to process: {len(image_paths)}")
+        print(f"DEBUG: First few images: {image_paths[:5]}")
+        
+        frame_provider = ImageFrameProvider(image_paths, mode=playback_mode)
+        print(f"Processing {len(image_paths)} images")
     else:
         # Default to camera
         camera_index = args.camera if args.camera is not None else 0
