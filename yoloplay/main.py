@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 
 import cv2
 
+from .config import Config, IMAGE_EXTENSIONS
 from .detectors import PoseDetector, YOLOPoseDetector, MediaPipePoseDetector
 from .fall_detector import FallDetector, YOLOFallDetector, MediaPipeFallDetector
 from .frame_providers import (
@@ -512,109 +513,46 @@ class PoseProcessor:
 
 def main():
     """Command line entry point for pose detection application."""
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Pose detection with YOLO or MediaPipe"
-    )
-    parser.add_argument(
-        "--detector",
-        type=str,
-        choices=["yolo", "mediapipe"],
-        default="yolo",
-        help="Pose detector to use (default: yolo)",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="yolov8n-pose.pt",
-        help="YOLO Pose model path (default: yolov8n-pose.pt)",
-    )
-    parser.add_argument(
-        "--camera",
-        type=int,
-        help="Camera index to use for camera input",
-    )
-    parser.add_argument(
-        "--video",
-        type=str,
-        help="Path to video file to process",
-    )
-    parser.add_argument(
-        "--images",
-        nargs="+",
-        help="List of image files to process",
-    )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        choices=["play", "step"],
-        default="play",
-        help="Playback mode for video/images (default: play)",
-    )
-    parser.add_argument(
-        "--fall-detection",
-        action="store_true",
-        default=True,
-        help="Enable fall detection using pose keypoints",
-    )
-
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Show detailed debug information and detection criteria",
-    )
-
-    args = parser.parse_args()
+    config = Config.from_args()
 
     # Create detector based on user choice
-    if args.detector == "mediapipe":
+    if config.detector == "mediapipe":
         detector = MediaPipePoseDetector()
         print("Using MediaPipe pose detector")
-        fall_detector = MediaPipeFallDetector() if args.fall_detection else None
+        fall_detector = MediaPipeFallDetector() if config.fall_detection else None
     else:
-        detector = YOLOPoseDetector(args.model)
-        print(f"Using YOLO pose detector with model: {args.model}")
-        fall_detector = YOLOFallDetector() if args.fall_detection else None
+        detector = YOLOPoseDetector(config.model)
+        print(f"Using YOLO pose detector with model: {config.model}")
+        fall_detector = YOLOFallDetector() if config.fall_detection else None
 
-    # if args.fall_detection:
+    # if config.fall_detection:
     #     if camera_config:
     #         print("Fall detection enabled with camera-aware multi-criteria analysis")
     #     else:
     #         print("Fall detection enabled (simple mode)")
 
     # Create frame provider based on input source
-    playback_mode = PlaybackMode.PLAY if args.mode == "play" else PlaybackMode.STEP
+    playback_mode = PlaybackMode.PLAY if config.mode == "play" else PlaybackMode.STEP
 
-    if args.video:
-        if args.video.startswith("rtsp://"):
-            frame_provider = RTSPFrameProvider(args.video)
-            print(f"Processing RTSP stream: {args.video}")
+    if config.video:
+        if config.video.startswith("rtsp://"):
+            frame_provider = RTSPFrameProvider(config.video)
+            print(f"Processing RTSP stream: {config.video}")
         else:
-            frame_provider = VideoFrameProvider(args.video, mode=playback_mode)
-            print(f"Processing video: {args.video}")
-    elif args.images:
+            frame_provider = VideoFrameProvider(config.video, mode=playback_mode)
+            print(f"Processing video: {config.video}")
+    elif config.images:
         import os
         import glob
 
         # Expand directories to list of image files
         image_paths = []
-        image_extensions = {
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".bmp",
-            ".tiff",
-            ".tif",
-            ".webp",
-            ".gif",
-        }
 
-        for path in args.images:
+        for path in config.images:
             if os.path.isdir(path):
                 # It's a directory - load all image files from it
                 print(f"DEBUG: '{path}' is a directory, scanning for images...")
-                for ext in image_extensions:
+                for ext in IMAGE_EXTENSIONS:
                     pattern = os.path.join(path, f"*{ext}")
                     found_files = glob.glob(pattern)
                     print(f"DEBUG: Found {len(found_files)} files with extension {ext}")
@@ -646,7 +584,7 @@ def main():
         print(f"Processing {len(image_paths)} images")
     else:
         # Default to camera
-        camera_index = args.camera if args.camera is not None else 0
+        camera_index = config.camera if config.camera is not None else 0
         frame_provider = CameraFrameProvider(camera_index)
         print(f"Using camera index: {camera_index}")
 
@@ -655,7 +593,7 @@ def main():
         detector,
         frame_provider,
         fall_detector,
-        show_debug_info=args.debug,
+        show_debug_info=config.debug,
     )
     processor.run()
 
