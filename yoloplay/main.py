@@ -33,6 +33,7 @@ class PoseProcessor:
         frame_provider: FrameProvider,
         show_debug_info: bool = False,
         calibrate: bool = False,
+        load_clusters: Optional[str] = None,
     ):
         """
         Initialize the pose processor.
@@ -42,13 +43,19 @@ class PoseProcessor:
             frame_provider: Frame provider instance (camera, video, or images)
             show_debug_info: Whether to show detailed debug information
             calibrate: Whether to enable calibration mode
+            load_clusters: Path to cluster data file to load
         """
         self.detector = detector
         self.frame_provider = frame_provider
         self.show_debug_info = show_debug_info
         self.calibrate = calibrate
-        self.calibration = Calibration() if calibrate else None
+        self.load_clusters = load_clusters
+        self.calibration = Calibration() if calibrate or load_clusters else None
         self.display_available = self._check_display_available()
+
+        # Load cluster data if specified
+        if load_clusters and self.calibration:
+            self.calibration.load_clusters(load_clusters)
 
         # FPS tracking
         self.prev_frame_time = 0.0
@@ -391,6 +398,7 @@ def main():
         frame_provider,
         show_debug_info=config.debug,
         calibrate=config.calibrate,
+        load_clusters=config.load_clusters,
     )
     processor.run()
 

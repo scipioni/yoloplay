@@ -18,6 +18,7 @@ class Config:
         self.mode: str = "play"
         self.debug: bool = False
         self.calibrate: bool = False
+        self.load_clusters: Optional[str] = None
 
     @classmethod
     def from_args(cls) -> 'Config':
@@ -70,6 +71,11 @@ class Config:
             action="store_true",
             help="Enable calibration mode to collect keypoints",
         )
+        parser.add_argument(
+            "--load-clusters",
+            type=str,
+            help="Load cluster data from specified JSON file",
+        )
 
         args = parser.parse_args()
 
@@ -82,6 +88,7 @@ class Config:
         config.mode = args.mode
         config.debug = args.debug
         config.calibrate = args.calibrate
+        config.load_clusters = args.load_clusters
 
         return config
 
