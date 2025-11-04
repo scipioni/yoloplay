@@ -50,11 +50,11 @@ class PoseProcessor:
         self.show_debug_info = show_debug_info
         self.calibrate = calibrate
         self.load_clusters = load_clusters
-        self.calibration = Calibration() if calibrate or load_clusters else None
+        self.calibration = Calibration()
         self.display_available = self._check_display_available()
 
         # Load cluster data if specified
-        if load_clusters and self.calibration:
+        if load_clusters:
             self.calibration.load_clusters(load_clusters)
 
         # FPS tracking
@@ -114,8 +114,14 @@ class PoseProcessor:
                 keypoints = self.detector.detect(frame)
 
                 # Add keypoints to calibration if enabled
-                if self.calibrate and self.calibration:
+                if self.calibrate:
                     self.calibration.add_keypoints(keypoints)
+
+                # Predict cluster if cluster data is loaded
+                if self.load_clusters:
+                    prediction = self.calibration.predict_cluster(keypoints)
+                    if prediction is not None:
+                        print(f"Predicted cluster: {prediction['cluster']}, distance: {prediction['distance']:.3f}")
 
                 # Output JSON debug information
                 if self.show_debug_info:
@@ -166,7 +172,7 @@ class PoseProcessor:
             print("Interrupted by user")
         finally:
             # Save calibration data if enabled
-            if self.calibrate and self.calibration:
+            if self.calibrate:
                 summary = self.calibration.get_summary()
                 print(f"Calibration completed: {summary}")
                 #self.calibration.save_to_file()
