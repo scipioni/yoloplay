@@ -20,12 +20,12 @@ class FallDetector(ABC):
     """Abstract base class for fall detectors."""
 
     @abstractmethod
-    def detect_fall(self, keypoints: Any) -> Tuple[bool, float, Optional[Dict]]:
+    def detect_fall(self, keypoints) -> Tuple[bool, float, Optional[Dict]]:
         """
         Detect if a person has fallen based on pose keypoints.
 
         Args:
-            keypoints: Pose keypoints array (shape depends on implementation)
+            keypoints: Keypoints object with normalized pose data
 
         Returns:
             Tuple of (is_fallen, confidence, details) where:
@@ -92,32 +92,39 @@ class YOLOFallDetector(FallDetector):
 
     def detect_fall(
         self,
-        keypoints: np.ndarray
+        keypoints
     ) -> Tuple[bool, float, Optional[Dict]]:
         """
-        Detect fall using YOLO keypoints with multi-criteria analysis.
+        Detect fall using YOLO keypoints with multi-criteria analysis for all persons.
 
         Args:
-            keypoints: YOLO keypoints array (num_persons, 17, 3) - x, y, conf
+            keypoints: Keypoints object with normalized pose data
 
         Returns:
-            Tuple of (is_fallen, confidence, details)
+            Tuple of (is_fallen, confidence, details) - returns first fall detected
         """
-        if keypoints is None or len(keypoints) == 0:
+        if keypoints is None or keypoints.data is None or len(keypoints.data) == 0:
             return False, 0.0, None
 
-        # Process each person detected (return first fall detected)
-        for person_kpts in keypoints:
+        # Process each person detected
+        num_persons = keypoints.num_persons
+        for person_idx in range(num_persons):
+            person_kpts = keypoints.get_person_keypoints(person_idx)
+
             # Check if we have sufficient keypoints for reliable detection
             if not self._has_sufficient_keypoints(person_kpts):
                 continue  # Skip this person, insufficient data
-            
+
             if self.use_advanced_detection:
                 is_fallen, confidence, details = self._detect_fall_advanced(person_kpts)
             else:
                 is_fallen, confidence, details = self._detect_fall_simple(person_kpts)
-            
+
             if is_fallen:
+                # Add person index to details
+                if details is None:
+                    details = {}
+                details["person_idx"] = person_idx
                 return is_fallen, confidence, details
 
         return False, 0.0, None
@@ -125,28 +132,19 @@ class YOLOFallDetector(FallDetector):
     def _has_sufficient_keypoints(self, keypoints) -> bool:
         """
         Check if there are sufficient visible keypoints for reliable detection.
-        
+
         Args:
-            keypoints: Single person keypoints (17, 3) - can be tensor or numpy
-            
+            keypoints: Single person keypoints (17, 3) - normalized numpy array
+
         Returns:
             True if sufficient keypoints are visible
         """
-        # Helper to convert tensor to numpy
-        def _to_numpy(keypoints):
-            if hasattr(keypoints, 'cpu'):
-                return keypoints.cpu().numpy()
-            return np.array(keypoints)
-        
-        # Convert to numpy if needed
-        keypoints = _to_numpy(keypoints)
-        
         # Count keypoints above confidence threshold
         visible_count = np.sum(keypoints[:, 2] > self.min_keypoint_confidence)
-        
+
         if visible_count < self.min_keypoints:
             return False
-        
+
         # Additionally, require at least nose OR eyes visible (head)
         # and at least one ankle OR knee (legs)
         head_visible = (
@@ -154,20 +152,29 @@ class YOLOFallDetector(FallDetector):
             keypoints[self.LEFT_EYE][2] > self.min_keypoint_confidence or
             keypoints[self.RIGHT_EYE][2] > self.min_keypoint_confidence
         )
-        
+
         legs_visible = (
             keypoints[self.LEFT_ANKLE][2] > self.min_keypoint_confidence or
             keypoints[self.RIGHT_ANKLE][2] > self.min_keypoint_confidence or
             keypoints[self.LEFT_KNEE][2] > self.min_keypoint_confidence or
             keypoints[self.RIGHT_KNEE][2] > self.min_keypoint_confidence
         )
-        
+
         return head_visible and legs_visible
 
     def _detect_fall_simple(
         self,
         keypoints: np.ndarray
     ) -> Tuple[bool, float, Optional[Dict]]:
+        """
+        Simple fall detection (legacy/backward compatible).
+
+        Args:
+            keypoints: Single person keypoints (17, 3) - normalized
+
+        Returns:
+            Tuple of (is_fallen, confidence, details)
+        """
         """
         Simple fall detection (legacy/backward compatible).
         
@@ -254,6 +261,15 @@ class YOLOFallDetector(FallDetector):
         self,
         keypoints: np.ndarray
     ) -> Tuple[bool, float, Optional[Dict]]:
+        """
+        Advanced multi-criteria fall detection using perspective calculations.
+
+        Args:
+            keypoints: Single person keypoints (17, 3) - normalized
+
+        Returns:
+            Tuple of (is_fallen, confidence, details)
+        """
         """
         Advanced multi-criteria fall detection using perspective calculations.
 
@@ -383,63 +399,66 @@ class MediaPipeFallDetector(FallDetector):
             "height_check": 0.35,
         }
 
-    def detect_fall(self, landmarks: Any) -> Tuple[bool, float, Optional[Dict]]:
+    def detect_fall(self, keypoints) -> Tuple[bool, float, Optional[Dict]]:
         """
         Detect fall using MediaPipe landmarks.
 
         Args:
-            landmarks: MediaPipe pose landmarks object
+            keypoints: Keypoints object with normalized pose data
 
         Returns:
             Tuple of (is_fallen, confidence, details)
         """
-        if not landmarks:
+        if keypoints is None or keypoints.data is None or len(keypoints.data) == 0:
             return False, 0.0, None
 
         if self.use_advanced_detection:
-            return self._detect_fall_advanced(landmarks)
+            return self._detect_fall_advanced(keypoints)
         else:
-            return self._detect_fall_simple(landmarks)
+            return self._detect_fall_simple(keypoints)
 
-    def _detect_fall_simple(self, landmarks: Any) -> Tuple[bool, float, Optional[Dict]]:
+    def _detect_fall_simple(self, keypoints) -> Tuple[bool, float, Optional[Dict]]:
         """
         Simple fall detection (legacy/backward compatible).
-        
+
         Args:
-            landmarks: MediaPipe pose landmarks
-            
+            keypoints: Keypoints object with normalized pose data
+
         Returns:
             Tuple of (is_fallen, confidence, details)
         """
-        # Extract key points
-        nose = landmarks.landmark[self.NOSE]
-        left_shoulder = landmarks.landmark[self.LEFT_SHOULDER]
-        right_shoulder = landmarks.landmark[self.RIGHT_SHOULDER]
-        left_hip = landmarks.landmark[self.LEFT_HIP]
-        right_hip = landmarks.landmark[self.RIGHT_HIP]
-        left_ankle = landmarks.landmark[self.LEFT_ANKLE]
-        right_ankle = landmarks.landmark[self.RIGHT_ANKLE]
+        # Get keypoints data (already normalized)
+        keypoints_data = keypoints.data
+
+        # Extract key points using MediaPipe indices
+        nose = keypoints_data[self.NOSE]
+        left_shoulder = keypoints_data[self.LEFT_SHOULDER]
+        right_shoulder = keypoints_data[self.RIGHT_SHOULDER]
+        left_hip = keypoints_data[self.LEFT_HIP]
+        right_hip = keypoints_data[self.RIGHT_HIP]
+        left_ankle = keypoints_data[self.LEFT_ANKLE]
+        right_ankle = keypoints_data[self.RIGHT_ANKLE]
 
         # Calculate average positions
-        shoulder_y = (left_shoulder.y + right_shoulder.y) / 2
-        hip_y = (left_hip.y + right_hip.y) / 2
-        ankle_y = (left_ankle.y + right_ankle.y) / 2
+        shoulder_y = (left_shoulder[1] + right_shoulder[1]) / 2
+        hip_y = (left_hip[1] + right_hip[1]) / 2
+        ankle_y = (left_ankle[1] + right_ankle[1]) / 2
 
         # Check 1: Head below hips (strong fall indicator)
         # In normalized coordinates, Y increases downward
-        if nose.y > hip_y:
+        if nose[1] > hip_y:
             confidence = 0.9
             details = {
                 "method": "simple",
                 "trigger": "head_below_hips",
-                "nose_y": float(nose.y),
+                "nose_y": float(nose[1]),
                 "hip_y": float(hip_y),
             }
             return True, confidence, details
 
         # Check 2: Body nearly horizontal and head close to feet
         body_tilt = abs(shoulder_y - hip_y)
-        head_to_feet = abs(nose.y - ankle_y)
+        head_to_feet = abs(nose[1] - ankle_y)
 
         # Fall criteria: body nearly horizontal and head close to feet
         tilt_threshold = 0.1  # normalized coordinates
@@ -457,21 +476,21 @@ class MediaPipeFallDetector(FallDetector):
 
         return False, 0.0, None
 
-    def _detect_fall_advanced(self, landmarks: Any) -> Tuple[bool, float, Optional[Dict]]:
+    def _detect_fall_advanced(self, keypoints) -> Tuple[bool, float, Optional[Dict]]:
         """
         Advanced multi-criteria fall detection using perspective calculations.
 
         Args:
-            landmarks: MediaPipe pose landmarks
+            keypoints: Keypoints object with normalized pose data
 
         Returns:
             Tuple of (is_fallen, confidence, details)
         """
         if not PERSPECTIVE_AVAILABLE:
-            return self._detect_fall_simple(landmarks)
+            return self._detect_fall_simple(keypoints)
 
-        # Convert landmarks to keypoints array for perspective functions
-        keypoints = self._landmarks_to_numpy(landmarks)
+        # Get keypoints data (already normalized)
+        keypoints_data = keypoints.data
 
         # Import perspective functions
         from .perspective import (
@@ -482,24 +501,24 @@ class MediaPipeFallDetector(FallDetector):
         )
 
         # Get adaptive thresholds based on person distance
-        thresholds = get_adaptive_thresholds(keypoints)
+        thresholds = get_adaptive_thresholds(keypoints_data)
 
         # Calculate body orientation
-        orientation = calculate_body_orientation(keypoints)
+        orientation = calculate_body_orientation(keypoints_data)
 
         # Calculate aspect ratio
-        aspect_ratio = calculate_aspect_ratio(keypoints)
+        aspect_ratio = calculate_aspect_ratio(keypoints_data)
 
         # Calculate keypoint distribution
-        distribution = calculate_keypoint_distribution(keypoints)
+        distribution = calculate_keypoint_distribution(keypoints_data)
 
         # Multi-criteria analysis
         criteria_scores = {}
 
         # 1. Height check (head-shoulder distance in normalized coordinates)
-        shoulder_y = (landmarks.landmark[self.LEFT_SHOULDER].y + landmarks.landmark[self.RIGHT_SHOULDER].y) / 2
-        hip_y = (landmarks.landmark[self.LEFT_HIP].y + landmarks.landmark[self.RIGHT_HIP].y) / 2
-        ankle_y = (landmarks.landmark[self.LEFT_ANKLE].y + landmarks.landmark[self.RIGHT_ANKLE].y) / 2
+        shoulder_y = (keypoints_data[self.LEFT_SHOULDER][1] + keypoints_data[self.RIGHT_SHOULDER][1]) / 2
+        hip_y = (keypoints_data[self.LEFT_HIP][1] + keypoints_data[self.RIGHT_HIP][1]) / 2
+        ankle_y = (keypoints_data[self.LEFT_ANKLE][1] + keypoints_data[self.RIGHT_ANKLE][1]) / 2
 
         # In normalized coordinates, smaller Y differences indicate more horizontal positioning
         body_vertical_span = abs(shoulder_y - ankle_y)

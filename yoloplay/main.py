@@ -105,40 +105,26 @@ class PoseProcessor:
                     self.fps = 1.0 / time_diff
 
                 # Detect pose
-                results = self.detector.detect(frame)
+                keypoints = self.detector.detect(frame)
 
                 # Detect falls if fall detector is enabled
                 fall_detected = False
                 fall_confidence = 0.0
                 self.fall_details = None
-                keypoints_data = None
 
                 if self.fall_detector is not None:
-                    if isinstance(self.detector, YOLOPoseDetector):
-                        # Extract keypoints from YOLO results
-                        for r in results:
-                            if hasattr(r, "keypoints") and r.keypoints is not None:
-                                keypoints = r.keypoints.data
-                                keypoints_data = keypoints
-                                fall_detected, fall_confidence, self.fall_details = (
-                                    self.fall_detector.detect_fall(keypoints)
-                                )
-                                break  # Process only first person for now
-                    elif isinstance(self.detector, MediaPipePoseDetector):
-                        # Use MediaPipe results directly
-                        if results and results.pose_landmarks:
-                            fall_detected, fall_confidence, self.fall_details = (
-                                self.fall_detector.detect_fall(results.pose_landmarks)
-                            )
+                    fall_detected, fall_confidence, self.fall_details = (
+                        self.fall_detector.detect_fall(keypoints)
+                    )
 
                 # Output JSON debug information
                 if self.show_debug_info:
                     self._output_json_debug(
-                        fall_detected, fall_confidence, keypoints_data
+                        fall_detected, fall_confidence, keypoints
                     )
 
                 # Visualize results
-                annotated_frame = self.detector.visualize(frame, results, fall_detected)
+                annotated_frame = self.detector.visualize(frame, keypoints, fall_detected)
 
                 # Add fall detection visualization with enhanced details
                 if self.fall_detector is not None:
@@ -407,7 +393,7 @@ class PoseProcessor:
             return False
 
     def _output_json_debug(
-        self, fall_detected: bool, fall_confidence: float, keypoints_data: Any
+        self, fall_detected: bool, fall_confidence: float, keypoints
     ) -> None:
         """
         Output JSON debug information to console.
@@ -436,30 +422,22 @@ class PoseProcessor:
                     ]
 
         # Add keypoints if available
-        if keypoints_data is not None:
+        if keypoints is not None and keypoints.data is not None:
             try:
-                # Convert tensor to numpy if needed
-                import numpy as np
+                # Get keypoints data (already normalized)
+                person_kpts = keypoints.data
 
-                if hasattr(keypoints_data, "cpu"):
-                    kpts_np = keypoints_data.cpu().numpy()
-                else:
-                    kpts_np = keypoints_data
-
-                # Extract first person keypoints (17, 3) - x, y, conf
-                if len(kpts_np.shape) == 3 and kpts_np.shape[0] > 0:
-                    person_kpts = kpts_np[0]
-                    # Convert to list ensuring it's JSON serializable
-                    person_kpts_list = (
-                        person_kpts.tolist()
-                        if hasattr(person_kpts, "tolist")
-                        else person_kpts
-                    )
-                    debug_info["keypoints"] = {
-                        "count": int(person_kpts.shape[0]),
-                        "data": person_kpts_list,
-                        "format": "COCO (17 keypoints: x, y, confidence)",
-                    }
+                # Convert to list ensuring it's JSON serializable
+                person_kpts_list = (
+                    person_kpts.tolist()
+                    if hasattr(person_kpts, "tolist")
+                    else person_kpts
+                )
+                debug_info["keypoints"] = {
+                    "count": int(person_kpts.shape[0]),
+                    "data": person_kpts_list,
+                    "format": f"{keypoints.source.upper()} keypoints (normalized x, y, confidence)",
+                }
             except Exception as e:
                 debug_info["keypoints_error"] = str(e)
 
