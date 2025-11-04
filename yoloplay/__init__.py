@@ -16,12 +16,6 @@ from .frame_providers import (
 )
 from .main import PoseProcessor
 
-# Optional camera configuration imports
-try:
-    from .camera_config import CameraConfig, CameraConfigManager, load_camera_config
-    _camera_config_exports = ["CameraConfig", "CameraConfigManager", "load_camera_config"]
-except ImportError:
-    _camera_config_exports = []
 
 __all__ = [
     # Detectors
@@ -41,6 +35,6 @@ __all__ = [
     "PlaybackMode",
     # Main Processor
     "PoseProcessor",
-] + _camera_config_exports
+]
 
 __version__ = "0.2.0"

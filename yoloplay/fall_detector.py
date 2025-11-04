@@ -13,18 +13,7 @@ from typing import Any, Optional, Tuple, Dict
 
 import numpy as np
 
-try:
-    from .camera_config import CameraConfig
-    from .perspective import (
-        get_adaptive_thresholds,
-        calculate_body_orientation,
-        calculate_aspect_ratio,
-        calculate_keypoint_distribution,
-    )
-    PERSPECTIVE_AVAILABLE = True
-except ImportError:
-    PERSPECTIVE_AVAILABLE = False
-    CameraConfig = None
+PERSPECTIVE_AVAILABLE = False
 
 
 class FallDetector(ABC):
@@ -76,25 +65,22 @@ class YOLOFallDetector(FallDetector):
 
     def __init__(
         self,
-        camera_config: Optional["CameraConfig"] = None,
         confidence_threshold: float = 0.45,  # Lowered for better sensitivity
         min_keypoints: int = 6,  # Lowered to allow detection with fewer keypoints
         min_keypoint_confidence: float = 0.25  # Lowered to be more permissive
     ):
         """
         Initialize YOLO fall detector.
-        
+
         Args:
-            camera_config: Optional camera configuration for perspective-aware detection
             confidence_threshold: Minimum confidence for fall detection (0-1)
             min_keypoints: Minimum number of visible keypoints required
             min_keypoint_confidence: Minimum confidence for keypoint to be considered visible
         """
-        self.camera_config = camera_config
         self.confidence_threshold = confidence_threshold
         self.min_keypoints = min_keypoints
         self.min_keypoint_confidence = min_keypoint_confidence
-        self.use_advanced_detection = camera_config is not None and PERSPECTIVE_AVAILABLE
+        self.use_advanced_detection = PERSPECTIVE_AVAILABLE
         
         # Criterion weights for multi-criteria fusion - adjusted for better fallen person detection
         self.weights = {
@@ -146,8 +132,11 @@ class YOLOFallDetector(FallDetector):
         Returns:
             True if sufficient keypoints are visible
         """
-        # Import helper to convert tensor to numpy
-        from .perspective import _to_numpy
+        # Helper to convert tensor to numpy
+        def _to_numpy(keypoints):
+            if hasattr(keypoints, 'cpu'):
+                return keypoints.cpu().numpy()
+            return np.array(keypoints)
         
         # Convert to numpy if needed
         keypoints = _to_numpy(keypoints)
@@ -266,154 +255,93 @@ class YOLOFallDetector(FallDetector):
         keypoints: np.ndarray
     ) -> Tuple[bool, float, Optional[Dict]]:
         """
-        Advanced multi-criteria fall detection with camera awareness.
-        
+        Advanced multi-criteria fall detection using perspective calculations.
+
         Args:
             keypoints: Single person keypoints (17, 3)
-            
+
         Returns:
             Tuple of (is_fallen, confidence, details)
         """
-        # Get adaptive thresholds based on camera config
-        thresholds = get_adaptive_thresholds(keypoints, self.camera_config)
-        
-        # Get key keypoints
+        if not PERSPECTIVE_AVAILABLE:
+            return self._detect_fall_simple(keypoints)
+
+        # Import perspective functions
+        from .perspective import (
+            get_adaptive_thresholds,
+            calculate_body_orientation,
+            calculate_aspect_ratio,
+            calculate_keypoint_distribution
+        )
+
+        # Get adaptive thresholds based on person distance
+        thresholds = get_adaptive_thresholds(keypoints)
+
+        # Calculate body orientation
+        orientation = calculate_body_orientation(keypoints)
+
+        # Calculate aspect ratio
+        aspect_ratio = calculate_aspect_ratio(keypoints)
+
+        # Calculate keypoint distribution
+        distribution = calculate_keypoint_distribution(keypoints)
+
+        # Multi-criteria analysis
+        criteria_scores = {}
+
+        # 1. Height check (head-feet distance)
+        height_threshold = thresholds["height_threshold"]
+        # Get key positions for height check
         nose = keypoints[self.NOSE]
-        left_hip = keypoints[self.LEFT_HIP]
-        right_hip = keypoints[self.RIGHT_HIP]
         left_ankle = keypoints[self.LEFT_ANKLE]
         right_ankle = keypoints[self.RIGHT_ANKLE]
-        
-        # Quick Check: Head below hips (strong fall indicator)
-        # In image coordinates, Y increases downward, so head_y > hip_y means head is lower
-        hips_visible = (left_hip[2] > 0.3 or right_hip[2] > 0.3)
-        head_below_hips_score = 0.0
-        
-        if nose[2] > 0.3 and hips_visible:
-            head_y = nose[1]
-            
-            # Calculate hip Y position
-            if left_hip[2] > 0.3 and right_hip[2] > 0.3:
-                hip_y = (left_hip[1] + right_hip[1]) / 2
-            elif left_hip[2] > 0.3:
-                hip_y = left_hip[1]
-            else:
-                hip_y = right_hip[1]
-            
-            # If head is below hips, this is a strong fall signal
-            if head_y > hip_y:
-                # Calculate how far below (for confidence scoring)
-                diff = head_y - hip_y
-                # Normalize by expected body segment size
-                expected_torso = thresholds.get("expected_height_pixels", 100) * 0.4
-                head_below_hips_score = min(diff / expected_torso, 1.0)
-        
-        # Criterion 1: Body Orientation
-        orientation_angle = calculate_body_orientation(keypoints, self.camera_config)
-        # The function returns the angle of the torso from vertical (0-180 degrees)
-        # A standing person might appear at the camera tilt angle (25°) or its complement (180°-25°=155°)
-        # A fallen person should be around 90° (horizontal)
-        
-        # Calculate the minimal angular distance to vertical (standing) positions
-        # The angle could be close to camera tilt or its complement (180 - tilt)
-        camera_tilt = self.camera_config.tilt_angle_degrees
-        dist_to_vertical_1 = abs(orientation_angle - camera_tilt)
-        dist_to_vertical_2 = abs(orientation_angle - (180 - camera_tilt))
-        min_dist_to_vertical = min(dist_to_vertical_1, dist_to_vertical_2)
-        
-        # If the angle is close to vertical (standing), score low
-        # If the angle is close to horizontal (90°), score high
-        if min_dist_to_vertical < 30:  # Close to vertical (standing)
-            orientation_score = 0.0
-        elif abs(orientation_angle - 90) < 30:  # Close to horizontal (fallen)
-            orientation_score = 1.0
-        else:  # Somewhere in between (leaning)
-            # Interpolate based on how close to horizontal
-            orientation_score = max(0.0, min(1.0, (abs(orientation_angle - 90) / 30.0)))
-        
-        # Criterion 2: Aspect Ratio - Adjusted for better fallen detection
-        aspect_ratio = calculate_aspect_ratio(keypoints)
-        # Map to score: <0.7 = standing (0), 1.2+ = fallen (1) - more sensitive range
-        if aspect_ratio < 0.7:
-            aspect_score = 0.0
-        elif aspect_ratio > 1.2:
-            aspect_score = 1.0
-        else:
-            aspect_score = (aspect_ratio - 0.7) / 0.5  # Linear interpolation with narrower range
-        
-        # Criterion 3: Vertical Height Check (head to feet distance) - More sensitive
-        if nose[2] > 0.25 and max(left_ankle[2], right_ankle[2]) > 0.25:  # Lowered confidence threshold
-            head_y = nose[1]
-            feet_y = max(left_ankle[1], right_ankle[1])
-            vertical_diff = abs(head_y - feet_y)
-            
-            # Lower the threshold to make it more sensitive to fallen positions
-            height_threshold = thresholds["height_threshold"] * 1.2  # Increased by 20% to be more sensitive
-            if vertical_diff < height_threshold:
-                height_score = 1.0 - (vertical_diff / height_threshold)
-            else:
-                height_score = 0.0
-        else:
-            height_score = 0.0
-        
-        # Criterion 4: Keypoint Distribution - More sensitive thresholds
-        distribution = calculate_keypoint_distribution(keypoints)
-        spread_ratio = distribution["spread_ratio"]
-        # High spread_ratio (>1.0) indicates horizontal spread (fallen) - Lowered threshold
-        if spread_ratio > 1.0:
-            distribution_score = min((spread_ratio - 0.5) / 1.0, 1.0)  # Adjusted for better sensitivity
-        else:
-            distribution_score = 0.0
-        
-        # If head is significantly below hips, give it strong weight
-        # This overrides other criteria to some extent
-        if head_below_hips_score > 0.3:  # Lowered threshold for more sensitivity
-            # Boost overall confidence when head is below hips
-            fused_confidence = max(
-                head_below_hips_score * 0.85,  # Head below hips is 85% confidence alone
-                (
-                    self.weights["orientation"] * orientation_score +
-                    self.weights["aspect_ratio"] * aspect_score +
-                    self.weights["height_check"] * height_score +
-                    self.weights["distribution"] * distribution_score
-                )
+
+        if nose[2] > 0.3 and (left_ankle[2] > 0.3 or right_ankle[2] > 0.3):
+            feet_y = max(left_ankle[1], right_ankle[1]) if left_ankle[2] > 0.3 and right_ankle[2] > 0.3 else (
+                left_ankle[1] if left_ankle[2] > 0.3 else right_ankle[1]
             )
+            head_feet_distance = abs(nose[1] - feet_y)
+            height_score = 1.0 if head_feet_distance < height_threshold else 0.0
+            criteria_scores["height_check"] = height_score
         else:
-            # Normal weighted fusion of criteria - but make it more sensitive
-            base_fusion = (
-                self.weights["orientation"] * orientation_score +
-                self.weights["aspect_ratio"] * aspect_score +
-                self.weights["height_check"] * height_score +
-                self.weights["distribution"] * distribution_score
-            )
-            
-            # If any single criterion has high score, increase sensitivity
-            max_criterion = max(orientation_score, aspect_score, height_score, distribution_score)
-            if max_criterion > 0.7:  # If any criterion is strongly indicating fall
-                fused_confidence = max(base_fusion, max_criterion * 0.7)  # Take higher of fusion or individual
-            else:
-                fused_confidence = base_fusion
-        
-        # Decision
+            criteria_scores["height_check"] = 0.0
+
+        # 2. Orientation check (body angle from vertical)
+        orientation_threshold = thresholds["orientation_threshold"]
+        orientation_score = 1.0 if orientation > orientation_threshold else 0.0
+        criteria_scores["orientation"] = orientation_score
+
+        # 3. Aspect ratio check (width/height)
+        aspect_threshold = thresholds["aspect_ratio_threshold"]
+        aspect_score = 1.0 if aspect_ratio > aspect_threshold else 0.0
+        criteria_scores["aspect_ratio"] = aspect_score
+
+        # 4. Distribution check (horizontal spread)
+        # Fallen people tend to have more horizontal spread
+        spread_ratio_threshold = 1.5  # Higher ratio indicates more horizontal distribution
+        distribution_score = 1.0 if distribution["spread_ratio"] > spread_ratio_threshold else 0.0
+        criteria_scores["distribution"] = distribution_score
+
+        # Weighted fusion of criteria
+        fused_confidence = sum(
+            criteria_scores[criterion] * self.weights[criterion]
+            for criterion in criteria_scores
+        )
+
+        # Determine if fall detected
         is_fallen = fused_confidence >= self.confidence_threshold
-        
-        # Detailed results
+
         details = {
             "method": "advanced",
-            "fused_confidence": float(fused_confidence),
-            "head_below_hips_score": float(head_below_hips_score),
-            "orientation_angle": float(orientation_angle),
-            "orientation_score": float(orientation_score),
-            "aspect_ratio": float(aspect_ratio),
-            "aspect_score": float(aspect_score),
-            "height_score": float(height_score),
-            "distribution_score": float(distribution_score),
-            "person_distance": float(thresholds["person_distance"]),
-            "adaptive_threshold": float(thresholds["height_threshold"]),
-            "weights": self.weights,
+            "fused_confidence": fused_confidence,
+            "criteria_scores": criteria_scores,
+            "orientation_angle": orientation,
+            "aspect_ratio": aspect_ratio,
+            "distribution": distribution,
+            "thresholds": thresholds,
         }
-        
-        return is_fallen, float(fused_confidence), details
+
+        return is_fallen, fused_confidence, details
 
 
 class MediaPipeFallDetector(FallDetector):
@@ -437,19 +365,16 @@ class MediaPipeFallDetector(FallDetector):
 
     def __init__(
         self,
-        camera_config: Optional["CameraConfig"] = None,
         confidence_threshold: float = 0.65
     ):
         """
         Initialize MediaPipe fall detector.
-        
+
         Args:
-            camera_config: Optional camera configuration for perspective-aware detection
             confidence_threshold: Minimum confidence for fall detection (0-1)
         """
-        self.camera_config = camera_config
         self.confidence_threshold = confidence_threshold
-        self.use_advanced_detection = camera_config is not None and PERSPECTIVE_AVAILABLE
+        self.use_advanced_detection = PERSPECTIVE_AVAILABLE
         
         # Criterion weights for multi-criteria fusion
         self.weights = {
@@ -534,102 +459,89 @@ class MediaPipeFallDetector(FallDetector):
 
     def _detect_fall_advanced(self, landmarks: Any) -> Tuple[bool, float, Optional[Dict]]:
         """
-        Advanced multi-criteria fall detection with camera awareness.
-        
+        Advanced multi-criteria fall detection using perspective calculations.
+
         Args:
             landmarks: MediaPipe pose landmarks
-            
+
         Returns:
             Tuple of (is_fallen, confidence, details)
         """
-        # Convert MediaPipe landmarks to numpy array for perspective calculations
-        keypoints_np = self._landmarks_to_numpy(landmarks)
-        
-        # Get adaptive thresholds
-        thresholds = get_adaptive_thresholds(keypoints_np, self.camera_config)
-        
-        # Get key landmarks
-        nose = landmarks.landmark[self.NOSE]
-        left_shoulder = landmarks.landmark[self.LEFT_SHOULDER]
-        right_shoulder = landmarks.landmark[self.RIGHT_SHOULDER]
-        left_hip = landmarks.landmark[self.LEFT_HIP]
-        right_hip = landmarks.landmark[self.RIGHT_HIP]
-        left_ankle = landmarks.landmark[self.LEFT_ANKLE]
-        right_ankle = landmarks.landmark[self.RIGHT_ANKLE]
-        
-        # Calculate key positions
-        shoulder_mid_y = (left_shoulder.y + right_shoulder.y) / 2
-        hip_mid_y = (left_hip.y + right_hip.y) / 2
-        ankle_y = (left_ankle.y + right_ankle.y) / 2
-        
-        # Check: Head below hips (strong fall indicator)
-        head_below_hips_score = 0.0
-        if nose.y > hip_mid_y:
-            # Head is below hips - calculate score based on how far
-            diff = nose.y - hip_mid_y
-            expected_torso = 0.3  # Expected torso height in normalized coords
-            head_below_hips_score = min(diff / expected_torso, 1.0)
-        
-        # Criterion 1: Body Orientation (using MediaPipe normalized coords)
-        body_vertical_span = abs(shoulder_mid_y - hip_mid_y)
-        
-        # Map to orientation score (small span = horizontal body)
-        orientation_score = 1.0 - min(body_vertical_span / 0.3, 1.0)
-        
-        # Criterion 2: Aspect Ratio
-        aspect_ratio = calculate_aspect_ratio(keypoints_np)
-        if aspect_ratio < 0.6:
-            aspect_score = 0.0
-        elif aspect_ratio > 1.5:
-            aspect_score = 1.0
-        else:
-            aspect_score = (aspect_ratio - 0.6) / 0.9
-        
-        # Criterion 3: Height Check (head to feet distance)
-        head_to_feet = abs(nose.y - ankle_y)
-        
-        # Normalized coordinate threshold (adjusted for camera)
-        height_threshold_norm = 0.4
-        if head_to_feet < height_threshold_norm:
-            height_score = 1.0 - (head_to_feet / height_threshold_norm)
-        else:
-            height_score = 0.0
-        
-        # If head is significantly below hips, boost confidence
-        if head_below_hips_score > 0.5:
-            fused_confidence = max(
-                head_below_hips_score * 0.85,  # Head below hips is strong signal
-                (
-                    self.weights["orientation"] * orientation_score +
-                    self.weights["aspect_ratio"] * aspect_score +
-                    self.weights["height_check"] * height_score
-                )
-            )
-        else:
-            # Normal weighted fusion
-            fused_confidence = (
-                self.weights["orientation"] * orientation_score +
-                self.weights["aspect_ratio"] * aspect_score +
-                self.weights["height_check"] * height_score
-            )
-        
-        # Decision
+        if not PERSPECTIVE_AVAILABLE:
+            return self._detect_fall_simple(landmarks)
+
+        # Convert landmarks to keypoints array for perspective functions
+        keypoints = self._landmarks_to_numpy(landmarks)
+
+        # Import perspective functions
+        from .perspective import (
+            get_adaptive_thresholds,
+            calculate_body_orientation,
+            calculate_aspect_ratio,
+            calculate_keypoint_distribution
+        )
+
+        # Get adaptive thresholds based on person distance
+        thresholds = get_adaptive_thresholds(keypoints)
+
+        # Calculate body orientation
+        orientation = calculate_body_orientation(keypoints)
+
+        # Calculate aspect ratio
+        aspect_ratio = calculate_aspect_ratio(keypoints)
+
+        # Calculate keypoint distribution
+        distribution = calculate_keypoint_distribution(keypoints)
+
+        # Multi-criteria analysis
+        criteria_scores = {}
+
+        # 1. Height check (head-shoulder distance in normalized coordinates)
+        shoulder_y = (landmarks.landmark[self.LEFT_SHOULDER].y + landmarks.landmark[self.RIGHT_SHOULDER].y) / 2
+        hip_y = (landmarks.landmark[self.LEFT_HIP].y + landmarks.landmark[self.RIGHT_HIP].y) / 2
+        ankle_y = (landmarks.landmark[self.LEFT_ANKLE].y + landmarks.landmark[self.RIGHT_ANKLE].y) / 2
+
+        # In normalized coordinates, smaller Y differences indicate more horizontal positioning
+        body_vertical_span = abs(shoulder_y - ankle_y)
+        height_threshold_normalized = 0.3  # Normalized threshold
+        height_score = 1.0 if body_vertical_span < height_threshold_normalized else 0.0
+        criteria_scores["height_check"] = height_score
+
+        # 2. Orientation check (body angle from vertical)
+        orientation_threshold = thresholds["orientation_threshold"]
+        orientation_score = 1.0 if orientation > orientation_threshold else 0.0
+        criteria_scores["orientation"] = orientation_score
+
+        # 3. Aspect ratio check (width/height)
+        aspect_threshold = thresholds["aspect_ratio_threshold"]
+        aspect_score = 1.0 if aspect_ratio > aspect_threshold else 0.0
+        criteria_scores["aspect_ratio"] = aspect_score
+
+        # 4. Distribution check (horizontal spread)
+        spread_ratio_threshold = 1.5
+        distribution_score = 1.0 if distribution["spread_ratio"] > spread_ratio_threshold else 0.0
+        criteria_scores["distribution"] = distribution_score
+
+        # Weighted fusion of criteria
+        fused_confidence = sum(
+            criteria_scores[criterion] * self.weights[criterion]
+            for criterion in criteria_scores
+        )
+
+        # Determine if fall detected
         is_fallen = fused_confidence >= self.confidence_threshold
-        
-        # Detailed results
+
         details = {
             "method": "advanced",
-            "fused_confidence": float(fused_confidence),
-            "head_below_hips_score": float(head_below_hips_score),
-            "orientation_score": float(orientation_score),
-            "aspect_ratio": float(aspect_ratio),
-            "aspect_score": float(aspect_score),
-            "height_score": float(height_score),
-            "person_distance": float(thresholds["person_distance"]),
-            "weights": self.weights,
+            "fused_confidence": fused_confidence,
+            "criteria_scores": criteria_scores,
+            "orientation_angle": orientation,
+            "aspect_ratio": aspect_ratio,
+            "distribution": distribution,
+            "thresholds": thresholds,
         }
-        
-        return is_fallen, float(fused_confidence), details
+
+        return is_fallen, fused_confidence, details
 
     def _landmarks_to_numpy(self, landmarks: Any) -> np.ndarray:
         """
