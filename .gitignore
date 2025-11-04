@@ -147,3 +147,4 @@ logs/
 *.pt
 
 /runtime
+*.json

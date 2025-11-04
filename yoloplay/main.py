@@ -19,6 +19,7 @@ from .frame_providers import (
     ImageFrameProvider,
     PlaybackMode,
 )
+from .calibration import Calibration
 
 
 class PoseProcessor:
@@ -31,6 +32,7 @@ class PoseProcessor:
         detector: PoseDetector,
         frame_provider: FrameProvider,
         show_debug_info: bool = False,
+        calibrate: bool = False,
     ):
         """
         Initialize the pose processor.
@@ -39,10 +41,13 @@ class PoseProcessor:
             detector: Pose detector instance (YOLO or MediaPipe)
             frame_provider: Frame provider instance (camera, video, or images)
             show_debug_info: Whether to show detailed debug information
+            calibrate: Whether to enable calibration mode
         """
         self.detector = detector
         self.frame_provider = frame_provider
         self.show_debug_info = show_debug_info
+        self.calibrate = calibrate
+        self.calibration = Calibration() if calibrate else None
         self.display_available = self._check_display_available()
 
         # FPS tracking
@@ -101,6 +106,10 @@ class PoseProcessor:
                 # Detect pose
                 keypoints = self.detector.detect(frame)
 
+                # Add keypoints to calibration if enabled
+                if self.calibrate and self.calibration:
+                    self.calibration.add_keypoints(keypoints)
+
                 # Output JSON debug information
                 if self.show_debug_info:
                     self._output_json_debug(keypoints)
@@ -149,6 +158,12 @@ class PoseProcessor:
         except KeyboardInterrupt:
             print("Interrupted by user")
         finally:
+            # Save calibration data if enabled
+            if self.calibrate and self.calibration:
+                summary = self.calibration.get_summary()
+                print(f"Calibration completed: {summary}")
+                self.calibration.save_to_file()
+
             # Release resources
             self.frame_provider.release()
             if self.display_available:
@@ -374,6 +389,7 @@ def main():
         detector,
         frame_provider,
         show_debug_info=config.debug,
+        calibrate=config.calibrate,
     )
     processor.run()
 

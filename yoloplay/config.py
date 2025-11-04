@@ -17,6 +17,7 @@ class Config:
         self.images: Optional[List[str]] = None
         self.mode: str = "play"
         self.debug: bool = False
+        self.calibrate: bool = False
 
     @classmethod
     def from_args(cls) -> 'Config':
@@ -64,6 +65,11 @@ class Config:
             action="store_true",
             help="Show detailed debug information and detection criteria",
         )
+        parser.add_argument(
+            "--calibrate",
+            action="store_true",
+            help="Enable calibration mode to collect keypoints",
+        )
 
         args = parser.parse_args()
 
@@ -75,6 +81,7 @@ class Config:
         config.images = args.images
         config.mode = args.mode
         config.debug = args.debug
+        config.calibrate = args.calibrate
 
         return config
 
