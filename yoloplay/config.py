@@ -16,7 +16,6 @@ class Config:
         self.video: Optional[str] = None
         self.images: Optional[List[str]] = None
         self.mode: str = "play"
-        self.fall_detection: bool = True
         self.debug: bool = False
 
     @classmethod
@@ -61,12 +60,6 @@ class Config:
             help="Playback mode for video/images (default: play)",
         )
         parser.add_argument(
-            "--fall-detection",
-            action="store_true",
-            default=True,
-            help="Enable fall detection using pose keypoints",
-        )
-        parser.add_argument(
             "--debug",
             action="store_true",
             help="Show detailed debug information and detection criteria",
@@ -81,7 +74,6 @@ class Config:
         config.video = args.video
         config.images = args.images
         config.mode = args.mode
-        config.fall_detection = args.fall_detection
         config.debug = args.debug
 
         return config

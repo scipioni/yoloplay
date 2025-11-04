@@ -240,14 +240,13 @@ class PoseDetector(ABC):
         pass
 
     @abstractmethod
-    def visualize(self, frame: np.ndarray, keypoints: Keypoints, fall_detected: bool = False) -> np.ndarray:
+    def visualize(self, frame: np.ndarray, keypoints: Keypoints) -> np.ndarray:
         """
         Visualize detection results on the frame.
 
         Args:
             frame: Input frame (BGR format)
             keypoints: Keypoints object from detect()
-            fall_detected: Whether a fall was detected (affects visualization colors)
 
         Returns:
             Annotated frame with pose visualization
@@ -312,14 +311,13 @@ class YOLOPoseDetector(PoseDetector):
 
         return Keypoints(keypoints_data, source="yolo", image_shape=frame.shape[:2])
 
-    def visualize(self, frame: np.ndarray, keypoints: Keypoints, fall_detected: bool = False) -> np.ndarray:
+    def visualize(self, frame: np.ndarray, keypoints: Keypoints) -> np.ndarray:
         """
         Visualize YOLO pose detection results for all persons.
 
         Args:
             frame: Input frame (BGR format)
             keypoints: Keypoints object from detect()
-            fall_detected: Whether a fall was detected (affects visualization colors)
 
         Returns:
             Annotated frame with pose keypoints and skeleton for all persons

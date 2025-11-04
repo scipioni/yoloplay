@@ -11,7 +11,6 @@ import cv2
 
 from .config import Config, IMAGE_EXTENSIONS
 from .detectors import PoseDetector, YOLOPoseDetector, MediaPipePoseDetector
-from .fall_detector import FallDetector, YOLOFallDetector, MediaPipeFallDetector
 from .frame_providers import (
     FrameProvider,
     CameraFrameProvider,
@@ -31,7 +30,6 @@ class PoseProcessor:
         self,
         detector: PoseDetector,
         frame_provider: FrameProvider,
-        fall_detector: Optional[FallDetector] = None,
         show_debug_info: bool = False,
     ):
         """
@@ -40,21 +38,16 @@ class PoseProcessor:
         Args:
             detector: Pose detector instance (YOLO or MediaPipe)
             frame_provider: Frame provider instance (camera, video, or images)
-            fall_detector: Optional fall detector instance
             show_debug_info: Whether to show detailed debug information
         """
         self.detector = detector
         self.frame_provider = frame_provider
-        self.fall_detector = fall_detector
         self.show_debug_info = show_debug_info
         self.display_available = self._check_display_available()
 
         # FPS tracking
         self.prev_frame_time = 0.0
         self.fps = 0.0
-
-        # Fall detection details
-        self.fall_details: Optional[Dict] = None
 
     def run(self, window_name: str = "Pose Detection") -> None:
         """
@@ -108,30 +101,12 @@ class PoseProcessor:
                 # Detect pose
                 keypoints = self.detector.detect(frame)
 
-                # Detect falls if fall detector is enabled
-                fall_detected = False
-                fall_confidence = 0.0
-                self.fall_details = None
-
-                if self.fall_detector is not None:
-                    fall_detected, fall_confidence, self.fall_details = (
-                        self.fall_detector.detect_fall(keypoints)
-                    )
-
                 # Output JSON debug information
                 if self.show_debug_info:
-                    self._output_json_debug(
-                        fall_detected, fall_confidence, keypoints
-                    )
+                    self._output_json_debug(keypoints)
 
                 # Visualize results
-                annotated_frame = self.detector.visualize(frame, keypoints, fall_detected)
-
-                # Add fall detection visualization with enhanced details
-                if self.fall_detector is not None:
-                    annotated_frame = self._add_fall_visualization(
-                        annotated_frame, fall_detected, fall_confidence
-                    )
+                annotated_frame = self.detector.visualize(frame, keypoints)
 
                 # Display the frame if display is available
                 if self.display_available:
@@ -239,134 +214,6 @@ class PoseProcessor:
             return f"Image {current}/{total} - MODE: {mode}"
         return None
 
-    def _add_fall_visualization(
-        self, frame, fall_detected: bool, fall_confidence: float
-    ):
-        """
-        Add enhanced fall detection visualization to frame.
-
-        Args:
-            frame: Input frame
-            fall_detected: Whether fall was detected
-            fall_confidence: Detection confidence
-
-        Returns:
-            Annotated frame
-        """
-        if fall_detected:
-            # Add red alert text with detection mode indicator
-            mode_indicator = ""
-            if self.fall_details and self.fall_details.get("method") == "advanced":
-                mode_indicator = " [ADV]"
-            elif self.fall_details and self.fall_details.get("method") == "simple":
-                mode_indicator = " [SIMPLE]"
-
-            cv2.putText(
-                frame,
-                f"FALL DETECTED! ({fall_confidence:.2f}){mode_indicator}",
-                (10, 90),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                (0, 0, 255),
-                3,
-            )
-            # Draw red border around frame
-            cv2.rectangle(
-                frame, (0, 0), (frame.shape[1], frame.shape[0]), (0, 0, 255), 10
-            )
-
-            # Add detailed criteria if debug mode and details available
-            if self.show_debug_info and self.fall_details:
-                y_offset = 130
-                details = self.fall_details
-
-                if details.get("method") == "advanced":
-                    # Show individual criterion scores
-                    criteria_text = []
-
-                    if "head_below_hips_score" in details:
-                        criteria_text.append(
-                            f"Head<Hips: {details.get('head_below_hips_score', 0):.2f}"
-                        )
-
-                    criteria_text.extend(
-                        [
-                            f"Orientation: {details.get('orientation_score', 0):.2f}",
-                            f"Aspect: {details.get('aspect_score', 0):.2f}",
-                            f"Height: {details.get('height_score', 0):.2f}",
-                        ]
-                    )
-
-                    if "distribution_score" in details:
-                        criteria_text.append(
-                            f"Distrib: {details.get('distribution_score', 0):.2f}"
-                        )
-
-                elif (
-                    details.get("method") == "simple"
-                    and details.get("trigger") == "head_below_hips"
-                ):
-                    # Show simple mode head below hips trigger
-                    criteria_text = [f"Trigger: Head below hips"]
-
-                    for text in criteria_text:
-                        cv2.putText(
-                            frame,
-                            text,
-                            (10, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (0, 0, 255),
-                            1,
-                        )
-                        y_offset += 25
-
-                    # Show distance if available
-                    if "person_distance" in details:
-                        cv2.putText(
-                            frame,
-                            f"Distance: {details['person_distance']:.1f}m",
-                            (10, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (0, 0, 255),
-                            1,
-                        )
-        else:
-            # Add green status text with detection mode indicator
-            mode_indicator = ""
-            if self.fall_details and self.fall_details.get("method") == "advanced":
-                mode_indicator = " [ADV]"
-            elif self.fall_details and self.fall_details.get("method") == "simple":
-                mode_indicator = " [SIMPLE]"
-
-            cv2.putText(
-                frame,
-                f"No Fall ({fall_confidence:.2f}){mode_indicator}",
-                (10, 90),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
-            )
-
-            # Show criteria in debug mode even when no fall
-            if self.show_debug_info and self.fall_details:
-                y_offset = 120
-                details = self.fall_details
-
-                if details.get("method") == "advanced":
-                    cv2.putText(
-                        frame,
-                        f"Conf: {details.get('fused_confidence', 0):.2f}",
-                        (10, y_offset),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 255, 0),
-                        1,
-                    )
-
-        return frame
 
     def _check_display_available(self) -> bool:
         """
@@ -393,21 +240,15 @@ class PoseProcessor:
             # Other error, safer to assume no display
             return False
 
-    def _output_json_debug(
-        self, fall_detected: bool, fall_confidence: float, keypoints
-    ) -> None:
+    def _output_json_debug(self, keypoints) -> None:
         """
         Output JSON debug information to console.
 
         Args:
-            fall_detected: Whether fall was detected
-            fall_confidence: Detection confidence
             keypoints_data: Raw keypoints data
         """
         debug_info: Dict[str, Any] = {
             "timestamp": time.time(),
-            "fallen_state": fall_detected,
-            "confidence": float(fall_confidence),
         }
 
         # Add image name if using ImageFrameProvider
@@ -442,58 +283,6 @@ class PoseProcessor:
             except Exception as e:
                 debug_info["keypoints_error"] = str(e)
 
-        # Add fall detection details if available
-        if self.fall_details:
-            debug_info["detection_details"] = {
-                "method": self.fall_details.get("method"),
-                "adaptive_threshold": float(self.fall_details.get("adaptive_threshold"))
-                if self.fall_details.get("adaptive_threshold") is not None
-                else None,
-                "person_distance": float(self.fall_details.get("person_distance"))
-                if self.fall_details.get("person_distance") is not None
-                else None,
-            }
-
-            # Add criterion scores for advanced detection
-            if self.fall_details.get("method") == "advanced":
-                debug_info["detection_details"]["criteria"] = {
-                    "fused_confidence": float(self.fall_details.get("fused_confidence"))
-                    if self.fall_details.get("fused_confidence") is not None
-                    else 0.0,
-                    "head_below_hips_score": float(
-                        self.fall_details.get("head_below_hips_score")
-                    )
-                    if self.fall_details.get("head_below_hips_score") is not None
-                    else 0.0,
-                    "orientation_score": float(
-                        self.fall_details.get("orientation_score")
-                    )
-                    if self.fall_details.get("orientation_score") is not None
-                    else 0.0,
-                    "orientation_angle": float(
-                        self.fall_details.get("orientation_angle")
-                    )
-                    if self.fall_details.get("orientation_angle") is not None
-                    else 0.0,
-                    "aspect_ratio": float(self.fall_details.get("aspect_ratio"))
-                    if self.fall_details.get("aspect_ratio") is not None
-                    else 0.0,
-                    "aspect_score": float(self.fall_details.get("aspect_score"))
-                    if self.fall_details.get("aspect_score") is not None
-                    else 0.0,
-                    "height_score": float(self.fall_details.get("height_score"))
-                    if self.fall_details.get("height_score") is not None
-                    else 0.0,
-                    "distribution_score": float(
-                        self.fall_details.get("distribution_score")
-                    )
-                    if self.fall_details.get("distribution_score") is not None
-                    else 0.0,
-                }
-            elif self.fall_details.get("method") == "simple":
-                debug_info["detection_details"]["trigger"] = self.fall_details.get(
-                    "trigger"
-                )
 
         # Print JSON to console (convert any remaining tensors to floats/strings)
         def serialize_tensors(obj):
@@ -519,17 +308,9 @@ def main():
     if config.detector == "mediapipe":
         detector = MediaPipePoseDetector()
         print("Using MediaPipe pose detector")
-        fall_detector = MediaPipeFallDetector() if config.fall_detection else None
     else:
         detector = YOLOPoseDetector(config.model)
         print(f"Using YOLO pose detector with model: {config.model}")
-        fall_detector = YOLOFallDetector() if config.fall_detection else None
-
-    # if config.fall_detection:
-    #     if camera_config:
-    #         print("Fall detection enabled with camera-aware multi-criteria analysis")
-    #     else:
-    #         print("Fall detection enabled (simple mode)")
 
     # Create frame provider based on input source
     playback_mode = PlaybackMode.PLAY if config.mode == "play" else PlaybackMode.STEP
@@ -592,7 +373,6 @@ def main():
     processor = PoseProcessor(
         detector,
         frame_provider,
-        fall_detector,
         show_debug_info=config.debug,
     )
     processor.run()

@@ -5,7 +5,6 @@ Enhanced with camera-aware fall detection using multi-criteria analysis.
 """
 
 from .detectors import PoseDetector, YOLOPoseDetector, MediaPipePoseDetector
-from .fall_detector import FallDetector, YOLOFallDetector, MediaPipeFallDetector
 from .frame_providers import (
     FrameProvider,
     CameraFrameProvider,
@@ -22,10 +21,6 @@ __all__ = [
     "PoseDetector",
     "YOLOPoseDetector",
     "MediaPipePoseDetector",
-    # Fall Detectors
-    "FallDetector",
-    "YOLOFallDetector",
-    "MediaPipeFallDetector",
     # Frame Providers
     "FrameProvider",
     "CameraFrameProvider",
