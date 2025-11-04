@@ -148,18 +148,18 @@ class Calibration:
             self.perform_clustering()
 
         # Save clustering results to JSON
-        with open(filename, 'w') as f:
+        json_filename = filename.replace('.pkl', '.json')
+        with open(json_filename, 'w') as f:
             json.dump(self._last_clustering_result, f, indent=2)
 
         # Save KMeans model to pickle file
         if hasattr(self, '_kmeans_model'):
-            model_filename = filename.replace('.json', '.pkl')
-            with open(model_filename, 'wb') as f:
+            with open(filename, 'wb') as f:
                 pickle.dump(self._kmeans_model, f)
 
         # Print summary
         result = self._last_clustering_result
-        print(f"Cluster data saved to {filename}")
+        print(f"Cluster data saved to {json_filename} and {filename}")
         print(f"Summary: {result['n_clusters']} clusters, silhouette score: {result['silhouette_score']:.3f}, {result['total_frames']} frames")
 
     def load_clusters(self, filename: str = "clusters.pkl") -> Optional[Dict[str, Any]]:
@@ -173,39 +173,38 @@ class Calibration:
             Dictionary containing the loaded cluster data, or None if file not found
         """
         try:
-            # Load clustering results from JSON
-            with open(filename, 'r') as f:
-                cluster_data = json.load(f)
-            self._last_clustering_result = cluster_data
-
             # Load KMeans model from pickle file
-            model_filename = filename.replace('.json', '.pkl')
+            with open(filename, 'rb') as f:
+                self._kmeans_model = pickle.load(f)
+
+            # Load clustering results from JSON
+            json_filename = filename.replace('.pkl', '.json')
             try:
-                with open(model_filename, 'rb') as f:
-                    self._kmeans_model = pickle.load(f)
+                with open(json_filename, 'r') as f:
+                    cluster_data = json.load(f)
+                self._last_clustering_result = cluster_data
             except FileNotFoundError:
-                # Fallback to reconstructing from centroids if pickle file not found
-                print(f"Model file {model_filename} not found, reconstructing from centroids")
-                if 'clusters' in cluster_data:
-                    centroids = []
-                    for cluster_key in sorted(cluster_data['clusters'].keys()):
-                        centroids.append(cluster_data['clusters'][cluster_key]['centroid'])
-                    if centroids:
-                        # Create a dummy KMeans model with the centroids
-                        n_clusters = len(centroids)
-                        self._kmeans_model = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                        self._kmeans_model.cluster_centers_ = np.array(centroids)
-                        # Note: This is a simplified reconstruction - full model state isn't saved
+                # Fallback to reconstructing from centroids if JSON file not found
+                print(f"JSON file {json_filename} not found, reconstructing from model centroids")
+                centroids = self._kmeans_model.cluster_centers_.tolist()
+                cluster_data = {
+                    "n_clusters": len(centroids),
+                    "silhouette_score": 0.0,  # Unknown
+                    "total_frames": 0,  # Unknown
+                    "clusters": {f"cluster_{i}": {"centroid": centroids[i]} for i in range(len(centroids))},
+                    "inertia": self._kmeans_model.inertia_
+                }
+                self._last_clustering_result = cluster_data
 
             # Print summary
-            print(f"Cluster data loaded from {filename}")
+            print(f"Cluster data loaded from {filename} and {json_filename}")
             print(f"Summary: {cluster_data['n_clusters']} clusters, silhouette score: {cluster_data['silhouette_score']:.3f}, {cluster_data['total_frames']} frames")
             return cluster_data
         except FileNotFoundError:
             print(f"Cluster file {filename} not found")
             return None
-        except json.JSONDecodeError as e:
-            print(f"Error parsing cluster file: {e}")
+        except pickle.UnpicklingError as e:
+            print(f"Error unpickling cluster file: {e}")
             return None
 
     def perform_clustering(self, k: Optional[int] = None) -> Dict[str, Any]:
@@ -322,7 +321,7 @@ class Calibration:
                             flattened.extend(kp[:2])  # Only x, y coordinates
                     if flattened:
                         # Convert to numpy array and predict
-                        X_new = np.array([flattened])
+                        X_new = np.array([flattened], dtype=self._kmeans_model.cluster_centers_.dtype)
                         cluster = self._kmeans_model.predict(X_new)[0]
 
                         # Calculate distance to the assigned cluster centroid
