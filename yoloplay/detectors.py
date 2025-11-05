@@ -220,7 +220,7 @@ class Keypoints:
 
     def filter_by_confidence(self, min_confidence: float) -> "Keypoints":
         """
-        Filter keypoints based on person confidence.
+        Filter keypoints based on person confidence and body part visibility.
 
         Args:
             min_confidence: Minimum confidence threshold
@@ -231,30 +231,81 @@ class Keypoints:
         if self._keypoints is None:
             return self
 
-        # For YOLO, filter persons based on average confidence
+        def has_visible_arm(keypoints: np.ndarray, min_conf: float) -> bool:
+            """Check if person has at least one visible arm."""
+            if self.source == "yolo":
+                # COCO keypoints: left_shoulder(5), right_shoulder(6), left_elbow(7), right_elbow(8), left_wrist(9), right_wrist(10)
+                left_arm_indices = [5, 7, 9]
+                right_arm_indices = [6, 8, 10]
+            else:  # mediapipe
+                # MediaPipe keypoints: left_shoulder(11), right_shoulder(12), left_elbow(13), right_elbow(14), left_wrist(15), right_wrist(16)
+                left_arm_indices = [11, 13, 15]
+                right_arm_indices = [12, 14, 16]
+
+            # Check left arm
+            left_arm = any(keypoints[i, 2] >= min_conf for i in left_arm_indices)
+            # Check right arm
+            right_arm = any(keypoints[i, 2] >= min_conf for i in right_arm_indices)
+
+            return left_arm or right_arm
+
+        def has_visible_leg(keypoints: np.ndarray, min_conf: float) -> bool:
+            """Check if person has at least one visible leg."""
+            if self.source == "yolo":
+                # COCO keypoints: left_hip(11), right_hip(12), left_knee(13), right_knee(14), left_ankle(15), right_ankle(16)
+                left_leg_indices = [11, 13, 15]
+                right_leg_indices = [12, 14, 16]
+            else:  # mediapipe
+                # MediaPipe keypoints: left_hip(23), right_hip(24), left_knee(25), right_knee(26), left_ankle(27), right_ankle(28)
+                left_leg_indices = [23, 25, 27]
+                right_leg_indices = [24, 26, 28]
+
+            # Check left leg
+            left_leg = any(keypoints[i, 2] >= min_conf for i in left_leg_indices)
+            # Check right leg
+            right_leg = any(keypoints[i, 2] >= min_conf for i in right_leg_indices)
+
+            return left_leg or right_leg
+
+        # For YOLO, filter persons based on confidence and body part visibility
         if self.source == "yolo":
             if len(self._keypoints.shape) == 3:  # Multiple persons
-                # Calculate average confidence for each person
-                person_confidences = np.mean(self._keypoints[:, :, 2], axis=1)
+                valid_persons = []
+                for i, person_kpts in enumerate(self._keypoints):
+                    # Check overall confidence
+                    avg_conf = np.mean(person_kpts[:, 2])
+                    has_conf = avg_conf >= min_confidence
+                    # Check body parts
+                    has_arm = has_visible_arm(person_kpts, min_confidence)
+                    has_leg = has_visible_leg(person_kpts, min_confidence)
 
-                # Filter persons above threshold
-                valid_persons = person_confidences >= min_confidence
-                if np.any(valid_persons):
+                    if has_conf and has_arm and has_leg:
+                        valid_persons.append(i)
+
+                if valid_persons:
                     filtered_keypoints = self._keypoints[valid_persons]
                 else:
-                    # No persons meet threshold, return empty keypoints
+                    # No persons meet criteria, return empty keypoints
                     filtered_keypoints = np.zeros((0, 17, 3))
             else:
                 # Single person
                 avg_conf = np.mean(self._keypoints[:, 2])
-                if avg_conf >= min_confidence:
+                has_conf = avg_conf >= min_confidence
+                has_arm = has_visible_arm(self._keypoints, min_confidence)
+                has_leg = has_visible_leg(self._keypoints, min_confidence)
+
+                if has_conf and has_arm and has_leg:
                     filtered_keypoints = self._keypoints
                 else:
                     filtered_keypoints = np.zeros((17, 3))
         else:
-            # MediaPipe - single person, check overall confidence
+            # MediaPipe - single person, check confidence and body parts
             avg_conf = np.mean(self._keypoints[:, 2])
-            if avg_conf >= min_confidence:
+            has_conf = avg_conf >= min_confidence
+            has_arm = has_visible_arm(self._keypoints, min_confidence)
+            has_leg = has_visible_leg(self._keypoints, min_confidence)
+
+            if has_conf and has_arm and has_leg:
                 filtered_keypoints = self._keypoints
             else:
                 filtered_keypoints = np.zeros((33, 3))
