@@ -46,3 +46,4 @@ Repository = "https://github.com/yourusername/yolopose-vertical-mapper"
 
 [project.scripts]
 yoloplay = "yoloplay.main:main"
+yoloplay_train = "yoloplay.classification:main"
