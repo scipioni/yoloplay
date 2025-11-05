@@ -61,22 +61,14 @@ docker compose build
 xhost +local:docker
 
 # Run with camera (default)
-docker compose run --rm yoloplay python -m yoloplay.main
+docker compose run --rm yoloplay yoloplay --video data/office.mkv
 
-# Run with video file
-docker compose run --rm yoloplay python -m yoloplay.main --video data/fall.webm
-
-# Run with RTSP stream
-docker compose run --rm yoloplay python -m yoloplay.main --video rtsp://example.com/stream
-
-# Run with MediaPipe detector
-docker compose run --rm yoloplay python -m yoloplay.main --detector mediapipe
 ```
 
 ### Local Installation
 
 ```bash
-pip install -e .
+uv pip install -e .
 ```
 
 ## Usage
@@ -93,44 +85,13 @@ Options:
   --video PATH                 Path to video file
   --images PATH [PATH ...]     List of image files
   --mode {play,step}           Playback mode for video/images (default: play)
-  --fall-detection             Enable fall detection using pose keypoints
 ```
 
 ### Examples
 
-**Camera with YOLO detector:**
+create dataset for training
 ```bash
-yoloplay --camera 0
-```
-
-**Video with step-through mode:**
-```bash
-yoloplay --video data/fall.webm --mode step
-```
-
-**Video with fall detection:**
-```bash
-yoloplay --video data/fall.webm --fall-detection
-```
-
-**Camera with MediaPipe and fall detection:**
-```bash
-yoloplay --detector mediapipe --camera 0 --fall-detection
-```
-
-**Images with MediaPipe detector:**
-```bash
-yoloplay --detector mediapipe --images img1.jpg img2.jpg img3.jpg
-```
-
-**Video with YOLO and auto-play mode:**
-```bash
-yoloplay --video data/fall.webm --mode play
-```
-
-**RTSP stream with MediaPipe detector:**
-```bash
-yoloplay --detector mediapipe --video rtsp://192.168.1.100:554/stream
+yoloplay --video data/calibration.mkv --save data/train.csv
 ```
 
 ### Keyboard Controls

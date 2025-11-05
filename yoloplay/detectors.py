@@ -273,7 +273,7 @@ class Keypoints:
 
         print("-" * 50)
 
-    def save(self, csv_writer) -> None:
+    def save(self, csv_writer, label=0) -> None:
         """
         Save keypoints data directly to CSV file.
 
@@ -295,7 +295,7 @@ class Keypoints:
 
                 # Save all keypoints in a single row: timestamp, x1, y1, x2, y2, ..., xn, yn
                 # Assuming keypoints are in shape (num_points, 3) where 3 is (x, y, confidence)
-                row = []
+                row = [label]
                 for keypoints in person_kpts_list:
                     print(len(keypoints))
                     for point in keypoints:
