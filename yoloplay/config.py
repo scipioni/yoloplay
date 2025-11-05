@@ -1,7 +1,3 @@
-"""
-Configuration module for yoloplay application.
-"""
-
 import argparse
 from typing import List, Optional
 
@@ -19,6 +15,7 @@ class Config:
         self.debug: bool = False
         self.calibrate: bool = False
         self.load_clusters: Optional[str] = None
+        self.save: Optional[str] = None
 
     @classmethod
     def from_args(cls) -> 'Config':
@@ -36,7 +33,8 @@ class Config:
         parser.add_argument(
             "--model",
             type=str,
-            default="yolov8n-pose.pt",
+            #default="yolov8n-pose.pt",
+            default="yolo11n-pose.pt",
             help="YOLO Pose model path (default: yolov8n-pose.pt)",
         )
         parser.add_argument(
@@ -68,13 +66,18 @@ class Config:
         )
         parser.add_argument(
             "--calibrate",
-            action="store_true",
-            help="Enable calibration mode to collect keypoints",
+            default="",
+            help="Save calibration file",
         )
         parser.add_argument(
             "--load-clusters",
             type=str,
             help="Load cluster data from specified JSON file",
+        )
+        parser.add_argument(
+            "--save",
+            type=str,
+            help="Save all keypoints to specified JSON file",
         )
 
         args = parser.parse_args()
@@ -89,6 +92,7 @@ class Config:
         config.debug = args.debug
         config.calibrate = args.calibrate
         config.load_clusters = args.load_clusters
+        config.save = args.save
 
         return config
 

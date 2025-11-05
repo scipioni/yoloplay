@@ -148,3 +148,5 @@ logs/
 
 /runtime
 *.json
+*.csv
+*.pkl

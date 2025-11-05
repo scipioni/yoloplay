@@ -1,25 +1,22 @@
-"""
-Main application for pose detection with various input sources.
-"""
-
+import csv
+import json
 import os
 import time
-import json
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 import cv2
 
-from .config import Config, IMAGE_EXTENSIONS
-from .detectors import PoseDetector, YOLOPoseDetector, MediaPipePoseDetector
+from .calibration import Calibration
+from .config import IMAGE_EXTENSIONS, Config
+from .detectors import MediaPipePoseDetector, PoseDetector, YOLOPoseDetector
 from .frame_providers import (
-    FrameProvider,
     CameraFrameProvider,
-    VideoFrameProvider,
-    RTSPFrameProvider,
+    FrameProvider,
     ImageFrameProvider,
     PlaybackMode,
+    RTSPFrameProvider,
+    VideoFrameProvider,
 )
-from .calibration import Calibration
 
 
 class PoseProcessor:
@@ -32,8 +29,9 @@ class PoseProcessor:
         detector: PoseDetector,
         frame_provider: FrameProvider,
         show_debug_info: bool = False,
-        calibrate: bool = False,
+        calibrate: str = "",
         load_clusters: Optional[str] = None,
+        save: Optional[str] = None,
     ):
         """
         Initialize the pose processor.
@@ -44,18 +42,29 @@ class PoseProcessor:
             show_debug_info: Whether to show detailed debug information
             calibrate: Whether to enable calibration mode
             load_clusters: Path to cluster data file to load
+            save: Path to save keypoints data to JSON file
         """
         self.detector = detector
         self.frame_provider = frame_provider
         self.show_debug_info = show_debug_info
         self.calibrate = calibrate
         self.load_clusters = load_clusters
+        self.save = save
         self.calibration = Calibration()
         self.display_available = self._check_display_available()
+        self.keypoints_data = []  # List to store all keypoints data
+        self.csv_file = None  # CSV file handle for saving keypoints
 
         # Load cluster data if specified
         if load_clusters:
             self.calibration.load_clusters(load_clusters)
+
+        # Open CSV file for saving keypoints if save is enabled
+        if save:
+            self.csv_file = open(save, "w", newline="")
+            self.csv_writer = csv.writer(self.csv_file)
+            # Write header
+            # self.csv_writer.writerow(['timestamp', 'x', 'y'])
 
         # FPS tracking
         self.prev_frame_time = 0.0
@@ -113,6 +122,10 @@ class PoseProcessor:
                 # Detect pose
                 keypoints = self.detector.detect(frame)
 
+                # Collect keypoints data if save is enabled
+                if self.save:
+                    keypoints.save(self.csv_writer)
+
                 # Add keypoints to calibration if enabled
                 if self.calibrate:
                     self.calibration.add_keypoints(keypoints)
@@ -121,7 +134,9 @@ class PoseProcessor:
                 if self.load_clusters:
                     prediction = self.calibration.predict_cluster(keypoints)
                     if prediction is not None:
-                        print(f"Predicted cluster: {prediction['cluster']}, distance: {prediction['distance']:.3f}")
+                        print(
+                            f"Predicted cluster: {prediction['cluster']}, distance: {prediction['distance']:.3f}"
+                        )
 
                 # Output JSON debug information
                 if self.show_debug_info:
@@ -175,8 +190,13 @@ class PoseProcessor:
             if self.calibrate:
                 summary = self.calibration.get_summary()
                 print(f"Calibration completed: {summary}")
-                #self.calibration.save_to_file()
-                self.calibration.save_clusters()
+                # self.calibration.save_to_file()
+                self.calibration.save_clusters(filename=self.calibrate, k=100)
+
+            # Close CSV file if opened
+            if self.csv_file:
+                self.csv_file.close()
+                print(f"Keypoints data saved to {self.save}")
 
             # Release resources
             self.frame_provider.release()
@@ -242,7 +262,6 @@ class PoseProcessor:
             mode = self.frame_provider.mode.value.upper()
             return f"Image {current}/{total} - MODE: {mode}"
         return None
-
 
     def _check_display_available(self) -> bool:
         """
@@ -312,7 +331,6 @@ class PoseProcessor:
             except Exception as e:
                 debug_info["keypoints_error"] = str(e)
 
-
         # Print JSON to console (convert any remaining tensors to floats/strings)
         def serialize_tensors(obj):
             if hasattr(obj, "cpu"):
@@ -352,8 +370,8 @@ def main():
             frame_provider = VideoFrameProvider(config.video, mode=playback_mode)
             print(f"Processing video: {config.video}")
     elif config.images:
-        import os
         import glob
+        import os
 
         # Expand directories to list of image files
         image_paths = []
@@ -405,6 +423,7 @@ def main():
         show_debug_info=config.debug,
         calibrate=config.calibrate,
         load_clusters=config.load_clusters,
+        save=config.save,
     )
     processor.run()
 

@@ -3,7 +3,7 @@ Pose detection module with different detector implementations.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Union, Optional
+from typing import Any, Optional, Union
 
 import cv2
 import numpy as np
@@ -19,17 +19,30 @@ class Keypoints:
 
     # COCO keypoint names for reference
     COCO_KEYPOINTS = [
-        "nose", "left_eye", "right_eye", "left_ear", "right_ear",
-        "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
-        "left_wrist", "right_wrist", "left_hip", "right_hip",
-        "left_knee", "right_knee", "left_ankle", "right_ankle"
+        "nose",
+        "left_eye",
+        "right_eye",
+        "left_ear",
+        "right_ear",
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
     ]
 
     def __init__(
         self,
         keypoints: Union[np.ndarray, Any],
         source: str = "yolo",
-        image_shape: Optional[tuple] = None
+        image_shape: Optional[tuple] = None,
     ):
         """
         Initialize keypoints from YOLO or MediaPipe data.
@@ -50,7 +63,9 @@ class Keypoints:
             self._original_landmarks = keypoints  # Store original landmarks
             self._normalize_mediapipe_keypoints(keypoints)
         else:
-            raise ValueError(f"Unsupported source: {source}. Must be 'yolo' or 'mediapipe'")
+            raise ValueError(
+                f"Unsupported source: {source}. Must be 'yolo' or 'mediapipe'"
+            )
 
     def _normalize_yolo_keypoints(self, keypoints: np.ndarray) -> None:
         """
@@ -60,17 +75,19 @@ class Keypoints:
             keypoints: YOLO keypoints array (num_persons, 17, 3) - x, y, conf
         """
         if self.image_shape is None:
-            raise ValueError("image_shape must be provided for YOLO keypoints normalization")
+            raise ValueError(
+                "image_shape must be provided for YOLO keypoints normalization"
+            )
 
         height, width = self.image_shape
 
         # Handle tensor conversion if needed
-        if hasattr(keypoints, 'cpu'):
+        if hasattr(keypoints, "cpu"):
             keypoints = keypoints.cpu().numpy()
 
         # Normalize x, y coordinates to [0, 1] for all persons
         normalized_keypoints = keypoints.copy()
-        normalized_keypoints[:, :, 0] /= width   # x coordinates
+        normalized_keypoints[:, :, 0] /= width  # x coordinates
         normalized_keypoints[:, :, 1] /= height  # y coordinates
 
         self._keypoints = normalized_keypoints
@@ -127,7 +144,10 @@ class Keypoints:
             return np.zeros((17 if self.source == "yolo" else 33, 3))
 
         if self.source == "yolo":
-            if len(self._keypoints.shape) == 3 and person_idx < self._keypoints.shape[0]:
+            if (
+                len(self._keypoints.shape) == 3
+                and person_idx < self._keypoints.shape[0]
+            ):
                 return self._keypoints[person_idx]
             elif person_idx == 0:
                 return self._keypoints
@@ -212,15 +232,39 @@ class Keypoints:
         elif self.source == "mediapipe":
             # Print MediaPipe landmark names (simplified)
             landmark_names = [
-                "nose", "left_eye_inner", "left_eye", "left_eye_outer",
-                "right_eye_inner", "right_eye", "right_eye_outer",
-                "left_ear", "right_ear", "mouth_left", "mouth_right",
-                "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
-                "left_wrist", "right_wrist", "left_pinky", "right_pinky",
-                "left_index", "right_index", "left_thumb", "right_thumb",
-                "left_hip", "right_hip", "left_knee", "right_knee",
-                "left_ankle", "right_ankle", "left_heel", "right_heel",
-                "left_foot_index", "right_foot_index"
+                "nose",
+                "left_eye_inner",
+                "left_eye",
+                "left_eye_outer",
+                "right_eye_inner",
+                "right_eye",
+                "right_eye_outer",
+                "left_ear",
+                "right_ear",
+                "mouth_left",
+                "mouth_right",
+                "left_shoulder",
+                "right_shoulder",
+                "left_elbow",
+                "right_elbow",
+                "left_wrist",
+                "right_wrist",
+                "left_pinky",
+                "right_pinky",
+                "left_index",
+                "right_index",
+                "left_thumb",
+                "right_thumb",
+                "left_hip",
+                "right_hip",
+                "left_knee",
+                "right_knee",
+                "left_ankle",
+                "right_ankle",
+                "left_heel",
+                "right_heel",
+                "left_foot_index",
+                "right_foot_index",
             ]
 
             for i, (x, y, conf) in enumerate(self._keypoints):
@@ -228,6 +272,39 @@ class Keypoints:
                 print("2d")
 
         print("-" * 50)
+
+    def save(self, csv_writer) -> None:
+        """
+        Save keypoints data directly to CSV file.
+
+        Args:
+            keypoints: Detected keypoints data
+        """
+        # Add keypoints if available
+        if self.data is not None:
+            try:
+                # Get keypoints data (already normalized)
+                person_kpts = self.data
+
+                # Convert to list if needed
+                person_kpts_list = (
+                    person_kpts.tolist()
+                    if hasattr(person_kpts, "tolist")
+                    else person_kpts
+                )
+
+                # Save all keypoints in a single row: timestamp, x1, y1, x2, y2, ..., xn, yn
+                # Assuming keypoints are in shape (num_points, 3) where 3 is (x, y, confidence)
+                row = []
+                for keypoints in person_kpts_list:
+                    print(len(keypoints))
+                    for point in keypoints:
+                        row.append(point[0])
+                        row.append(point[1])
+                csv_writer.writerow(row)
+
+            except Exception as e:
+                print(f"Error saving keypoints to CSV: {e}")
 
 
 class PoseDetector(ABC):
@@ -266,19 +343,49 @@ class YOLOPoseDetector(PoseDetector):
 
     # YOLO skeleton connections for drawing bones
     skeleton = [
-        [16, 14], [14, 12], [17, 15], [15, 13], [12, 13],  # legs and center
-        [6, 12], [7, 13], [6, 7], [6, 8], [7, 9],  # body and arms
-        [8, 10], [9, 11], [2, 3], [1, 2], [1, 3],  # arms, face
-        [2, 4], [3, 5], [4, 6], [5, 7],  # face to shoulders to arms
+        [16, 14],
+        [14, 12],
+        [17, 15],
+        [15, 13],
+        [12, 13],  # legs and center
+        [6, 12],
+        [7, 13],
+        [6, 7],
+        [6, 8],
+        [7, 9],  # body and arms
+        [8, 10],
+        [9, 11],
+        [2, 3],
+        [1, 2],
+        [1, 3],  # arms, face
+        [2, 4],
+        [3, 5],
+        [4, 6],
+        [5, 7],  # face to shoulders to arms
     ]
 
     # Colors for different body parts
     pose_palette = np.array(
         [
-            [51, 153, 255], [51, 153, 255], [51, 153, 255], [51, 153, 255], [51, 153, 255],  # legs
-            [255, 51, 51], [255, 51, 51], [255, 51, 51], [255, 102, 66], [255, 102, 66],  # body and arms
-            [255, 102, 66], [255, 102, 66], [51, 153, 51], [51, 153, 51], [51, 153, 51],  # arms and face
-            [51, 153, 51], [51, 153, 51], [51, 153, 51], [51, 153, 51],  # face to shoulders
+            [51, 153, 255],
+            [51, 153, 255],
+            [51, 153, 255],
+            [51, 153, 255],
+            [51, 153, 255],  # legs
+            [255, 51, 51],
+            [255, 51, 51],
+            [255, 51, 51],
+            [255, 102, 66],
+            [255, 102, 66],  # body and arms
+            [255, 102, 66],
+            [255, 102, 66],
+            [51, 153, 51],
+            [51, 153, 51],
+            [51, 153, 51],  # arms and face
+            [51, 153, 51],
+            [51, 153, 51],
+            [51, 153, 51],
+            [51, 153, 51],  # face to shoulders
         ],
         dtype=np.uint8,
     ).tolist()
@@ -291,6 +398,7 @@ class YOLOPoseDetector(PoseDetector):
             model_path: Path to YOLO pose model weights
         """
         from ultralytics import YOLO
+
         self.model = YOLO(model_path)
 
     def detect(self, frame: np.ndarray) -> Keypoints:
@@ -314,7 +422,9 @@ class YOLOPoseDetector(PoseDetector):
 
         if keypoints_data is None:
             # Return empty keypoints if no detection
-            return Keypoints(np.zeros((0, 17, 3)), source="yolo", image_shape=frame.shape[:2])
+            return Keypoints(
+                np.zeros((0, 17, 3)), source="yolo", image_shape=frame.shape[:2]
+            )
 
         return Keypoints(keypoints_data, source="yolo", image_shape=frame.shape[:2])
 
@@ -351,20 +461,37 @@ class YOLOPoseDetector(PoseDetector):
                         continue
 
                     # Convert normalized coordinates back to pixel coordinates
-                    pos1 = (int(person_kpts[idx1][0] * frame.shape[1]), int(person_kpts[idx1][1] * frame.shape[0]))
-                    pos2 = (int(person_kpts[idx2][0] * frame.shape[1]), int(person_kpts[idx2][1] * frame.shape[0]))
+                    pos1 = (
+                        int(person_kpts[idx1][0] * frame.shape[1]),
+                        int(person_kpts[idx1][1] * frame.shape[0]),
+                    )
+                    pos2 = (
+                        int(person_kpts[idx2][0] * frame.shape[1]),
+                        int(person_kpts[idx2][1] * frame.shape[0]),
+                    )
 
                     # Check if both points have high confidence
                     conf1 = person_kpts[idx1][2]
                     conf2 = person_kpts[idx2][2]
 
-                    if (conf1 > 0.5 and conf2 > 0.5 and
-                        pos1[0] > 0 and pos1[1] > 0 and
-                        pos2[0] > 0 and pos2[1] > 0):
+                    if (
+                        conf1 > 0.5
+                        and conf2 > 0.5
+                        and pos1[0] > 0
+                        and pos1[1] > 0
+                        and pos2[0] > 0
+                        and pos2[1] > 0
+                    ):
                         # Draw the bone (line between keypoints)
                         color = self.pose_palette[i]
-                        cv2.line(annotated_frame, pos1, pos2, color,
-                                thickness=2, lineType=cv2.LINE_AA)
+                        cv2.line(
+                            annotated_frame,
+                            pos1,
+                            pos2,
+                            color,
+                            thickness=2,
+                            lineType=cv2.LINE_AA,
+                        )
 
         return annotated_frame
 
@@ -389,6 +516,7 @@ class MediaPipePoseDetector(PoseDetector):
             min_detection_confidence: Minimum detection confidence threshold
         """
         import mediapipe as mp
+
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
         self.pose = self.mp_pose.Pose(
@@ -418,7 +546,9 @@ class MediaPipePoseDetector(PoseDetector):
             # Return empty keypoints if no detection
             return Keypoints(None, source="mediapipe")
 
-    def visualize(self, frame: np.ndarray, keypoints: Keypoints, fall_detected: bool = False) -> np.ndarray:
+    def visualize(
+        self, frame: np.ndarray, keypoints: Keypoints, fall_detected: bool = False
+    ) -> np.ndarray:
         """
         Visualize MediaPipe pose detection results.
 
@@ -453,9 +583,13 @@ class MediaPipePoseDetector(PoseDetector):
 
             # Draw bounding box with red color if fall detected
             if fall_detected:
-                cv2.rectangle(annotated_frame, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3)
+                cv2.rectangle(
+                    annotated_frame, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3
+                )
             else:
-                cv2.rectangle(annotated_frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 3)
+                cv2.rectangle(
+                    annotated_frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 3
+                )
 
             # Draw pose landmarks and connections with default colors
             self.mp_drawing.draw_landmarks(

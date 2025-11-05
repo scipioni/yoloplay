@@ -136,7 +136,7 @@ class Calibration:
 
         return best_k, best_score
 
-    def save_clusters(self, filename: str = "clusters.pkl") -> None:
+    def save_clusters(self, filename: str = "clusters.pkl", k: Optional[int] = None) -> None:
         """
         Save clustering results and KMeans model to files.
 
@@ -145,7 +145,7 @@ class Calibration:
         """
         if not hasattr(self, '_last_clustering_result'):
             print("No clustering results available. Run perform_clustering() first.")
-            self.perform_clustering()
+            self.perform_clustering(k=k)
 
         # Save clustering results to JSON
         json_filename = filename.replace('.pkl', '.json')
