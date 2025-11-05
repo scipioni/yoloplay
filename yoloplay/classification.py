@@ -68,8 +68,8 @@ class KeypointDataset(Dataset):
                     print(f"Warning: Invalid row length {len(row)}, expected 35")
                     continue
                 try:
-                    keypoints = [float(x) for x in row[:-1]]
-                    label = int(row[-1])
+                    keypoints = [float(x) for x in row[1:]]
+                    label = int(row[0])
                     self.data.append((keypoints, label))
                 except ValueError as e:
                     print(f"Warning: Could not parse row: {e}")
@@ -87,11 +87,9 @@ class KeypointDataset(Dataset):
 
 
 def train_model(
-    stand_dir: Optional[str] = "data/stand",
-    fallen_dir: Optional[str] = "data/fallen",
     csv_file: Optional[str] = None,
     model_path: str = "models/pose_classification.pt",
-    epochs: int = 100,
+    epochs: int = 10,
     batch_size: int = 16,
     learning_rate: float = 0.001,
     device: str = "auto",
@@ -100,8 +98,6 @@ def train_model(
     Train the pose classification model.
 
     Args:
-        stand_dir: Directory with standing pose images (ignored if csv_file is provided)
-        fallen_dir: Directory with fallen pose images (ignored if csv_file is provided)
         csv_file: CSV file with keypoints and labels
         model_path: Path to save the trained model
         epochs: Number of training epochs
@@ -120,15 +116,7 @@ def train_model(
     if csv_file is not None:
         # Load from CSV
         dataset = KeypointDataset(csv_file=csv_file)
-    else:
-        # Add yoloplay to path
-        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from yoloplay.detectors import YOLOPoseDetector
-
-        # Initialize pose detector
-        detector = YOLOPoseDetector()
-        # Create dataset
-        dataset = KeypointDataset(stand_dir, fallen_dir, detector)
+    
 
     if len(dataset) == 0:
         raise ValueError("No valid training data found")
