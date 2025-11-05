@@ -403,12 +403,12 @@ class Keypoints:
 
                 # Save all keypoints in a single row: timestamp, x1, y1, x2, y2, ..., xn, yn
                 # Assuming keypoints are in shape (num_points, 3) where 3 is (x, y, confidence)
-                row = [label]
                 for keypoints in person_kpts_list:
+                    row = [label]
                     for point in keypoints:
                         row.append(point[0])
                         row.append(point[1])
-                csv_writer.writerow(row)
+                    csv_writer.writerow(row)
 
             except Exception as e:
                 print(f"Error saving keypoints to CSV: {e}")
