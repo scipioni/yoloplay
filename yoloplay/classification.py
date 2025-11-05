@@ -70,6 +70,65 @@ class NeuralNet(nn.Module):
         return out
 
 
+class Autoencoder(nn.Module):
+    """
+    Autoencoder for one-class anomaly detection of standing poses.
+    Learns to reconstruct normal standing poses. Reconstruction error
+    indicates how "standing-like" a pose is.
+    """
+    def __init__(self, input_size=34, hidden_sizes=[64, 32, 16], dropout_rate=0.1):
+        """
+        Args:
+            input_size: Number of input features (34 for 17 keypoints x,y)
+            hidden_sizes: List of hidden layer sizes for encoder (decoder mirrors this)
+            dropout_rate: Dropout rate for regularization
+        """
+        super(Autoencoder, self).__init__()
+        
+        # Build encoder layers
+        encoder_layers = []
+        prev_size = input_size
+        for hidden_size in hidden_sizes:
+            encoder_layers.extend([
+                nn.Linear(prev_size, hidden_size),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate)
+            ])
+            prev_size = hidden_size
+        self.encoder = nn.Sequential(*encoder_layers)
+        
+        # Build decoder layers (mirror of encoder)
+        decoder_layers = []
+        reversed_sizes = list(reversed(hidden_sizes[:-1])) + [input_size]
+        prev_size = hidden_sizes[-1]
+        for i, hidden_size in enumerate(reversed_sizes):
+            decoder_layers.append(nn.Linear(prev_size, hidden_size))
+            if i < len(reversed_sizes) - 1:  # No activation on output layer
+                decoder_layers.extend([
+                    nn.ReLU(),
+                    nn.Dropout(dropout_rate)
+                ])
+            prev_size = hidden_size
+        self.decoder = nn.Sequential(*decoder_layers)
+        
+        # Store latent dimension for reference
+        self.latent_dim = hidden_sizes[-1]
+    
+    def forward(self, x):
+        """Forward pass through encoder and decoder."""
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return decoded
+    
+    def encode(self, x):
+        """Get latent representation only."""
+        return self.encoder(x)
+    
+    def decode(self, z):
+        """Reconstruct from latent representation."""
+        return self.decoder(z)
+
+
 class KeypointDataset(Dataset):
     """
     Dataset for loading keypoints and labels from CSV file or image directories.
@@ -313,6 +372,186 @@ def train_model(
         torch.save(model.state_dict(), model_path)
         print(f"Final model also saved to {model_path}")
 
+def train_autoencoder(
+    csv_file: str,
+    model_path: str = "models/pose_autoencoder.pt",
+    epochs: int = 50,
+    batch_size: int = 16,
+    learning_rate: float = 0.001,
+    device: str = "auto",
+    split_ratio: float = 0.8,
+    patience: int = 15,
+    random_seed: int = 42,
+    dropout_rate: float = 0.1,
+    hidden_sizes: List[int] = None,
+) -> None:
+    """
+    Train an autoencoder for one-class anomaly detection on standing poses.
+    
+    Args:
+        csv_file: CSV file with keypoints (only uses class 0/standing)
+        model_path: Path to save the trained model
+        epochs: Number of training epochs
+        batch_size: Batch size for training
+        learning_rate: Learning rate for optimizer
+        device: Device to train on ('auto', 'cpu', or 'cuda')
+        split_ratio: Train/validation split ratio
+        patience: Early stopping patience in epochs
+        random_seed: Random seed for reproducibility
+        dropout_rate: Dropout rate for regularization
+        hidden_sizes: List of hidden layer sizes for encoder
+    """
+    if hidden_sizes is None:
+        hidden_sizes = [64, 32, 16]
+    
+    # Set random seed
+    torch.manual_seed(random_seed)
+    np.random.seed(random_seed)
+    
+    # Set device
+    if device == "auto":
+        device_torch = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device_torch = torch.device(device)
+    
+    print(f"Training autoencoder on device: {device_torch}")
+    
+    # Load dataset (only use standing poses - label 0)
+    full_dataset = KeypointDataset(csv_file=csv_file)
+    
+    # Filter for only standing poses (label 0)
+    standing_data = [(kpts, label) for kpts, label in full_dataset.data if label == 0]
+    if len(standing_data) == 0:
+        raise ValueError("No standing poses (label=0) found in dataset!")
+    
+    print(f"Found {len(standing_data)} standing poses for training")
+    
+    # Create new dataset with only standing poses
+    class StandingDataset(Dataset):
+        def __init__(self, data):
+            self.data = data
+        
+        def __len__(self):
+            return len(self.data)
+        
+        def __getitem__(self, idx):
+            keypoints, _ = self.data[idx]
+            return torch.tensor(keypoints, dtype=torch.float32)
+    
+    dataset = StandingDataset(standing_data)
+    
+    # Split into train and validation
+    train_size = int(len(dataset) * split_ratio)
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        dataset, [train_size, val_size],
+        generator=torch.Generator().manual_seed(random_seed)
+    )
+    
+    print(f"Train set: {len(train_dataset)} samples, Val set: {len(val_dataset)} samples")
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    # Initialize model
+    model = Autoencoder(input_size=34, hidden_sizes=hidden_sizes, dropout_rate=dropout_rate)
+    model.to(device_torch)
+    
+    # Compute normalization statistics from training data
+    all_train_data = []
+    for batch in train_loader:
+        all_train_data.append(batch)
+    all_train_data = torch.cat(all_train_data, dim=0)
+    mean = all_train_data.mean(dim=0)
+    std = all_train_data.std(dim=0) + 1e-8  # Avoid division by zero
+    
+    print(f"Normalization - Mean range: [{mean.min():.4f}, {mean.max():.4f}]")
+    print(f"Normalization - Std range: [{std.min():.4f}, {std.max():.4f}]")
+    
+    # Loss and optimizer
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    
+    # Early stopping
+    early_stopping = EarlyStopping(patience=patience, mode='min')
+    best_val_loss = float('inf')
+    best_model_path = model_path.replace('.pt', '_best.pt')
+    
+    # Training loop
+    for epoch in range(epochs):
+        # Training phase
+        model.train()
+        train_loss = 0.0
+        
+        for batch in train_loader:
+            batch = batch.to(device_torch)
+            # Normalize
+            batch_norm = (batch - mean.to(device_torch)) / std.to(device_torch)
+            
+            # Forward pass
+            reconstructed = model(batch_norm)
+            loss = criterion(reconstructed, batch_norm)
+            
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+        
+        avg_train_loss = train_loss / len(train_loader)
+        
+        # Validation phase
+        model.eval()
+        val_loss = 0.0
+        
+        with torch.no_grad():
+            for batch in val_loader:
+                batch = batch.to(device_torch)
+                # Normalize
+                batch_norm = (batch - mean.to(device_torch)) / std.to(device_torch)
+                
+                # Forward pass
+                reconstructed = model(batch_norm)
+                loss = criterion(reconstructed, batch_norm)
+                
+                val_loss += loss.item()
+        
+        avg_val_loss = val_loss / len(val_loader)
+        
+        # Print progress
+        print(f"Epoch {epoch + 1}/{epochs}")
+        print(f"  Train Loss: {avg_train_loss:.6f}")
+        print(f"  Val Loss:   {avg_val_loss:.6f}")
+        
+        # Save best model
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            os.makedirs(os.path.dirname(model_path) if os.path.dirname(model_path) else '.', exist_ok=True)
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'train_loss': avg_train_loss,
+                'val_loss': avg_val_loss,
+                'mean': mean,
+                'std': std,
+                'hidden_sizes': hidden_sizes,
+                'model_type': 'autoencoder',
+            }, best_model_path)
+            print(f"  ✓ Best model saved (val_loss: {avg_val_loss:.6f})")
+        
+        # Early stopping
+        if early_stopping(avg_val_loss):
+            print(f"\nEarly stopping at epoch {epoch + 1}")
+            break
+    
+    print(f"\nTraining completed!")
+    print(f"Best model saved to {best_model_path}")
+    print(f"Best validation loss: {best_val_loss:.6f}")
+
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -411,7 +650,7 @@ def main():
 class KeypointClassifier:
     """
     Classifier for pose keypoints using trained neural network.
-    Predicts binary classification: standing (0) or fallen (1).
+    Supports both binary classification and autoencoder-based anomaly detection.
     """
     
     def __init__(self, model_path: str, device: str = "auto"):
@@ -431,31 +670,49 @@ class KeypointClassifier:
         else:
             self.device = torch.device(device)
         
-        # Load model
-        self.model = self._load_model()
+        # Load model and determine type
+        self.model, self.model_type, self.mean, self.std = self._load_model()
         self.model.eval()  # Set to evaluation mode
         
-    def _load_model(self) -> NeuralNet:
-        """Load the trained model from file."""
+        print(f"Loaded {self.model_type} model from {model_path}")
+        
+    def _load_model(self):
+        """Load the trained model from file and determine its type."""
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
         
-        # Initialize model architecture
-        model = NeuralNet(input_size=34, hidden_size=256, num_classes=1)
-        
-        # Load state dict (handle both direct state dict and checkpoint format)
+        # Load checkpoint
         checkpoint = torch.load(self.model_path, map_location=self.device)
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        
+        # Determine model type
+        if isinstance(checkpoint, dict) and checkpoint.get('model_type') == 'autoencoder':
+            # Autoencoder model
+            hidden_sizes = checkpoint.get('hidden_sizes', [64, 32, 16])
+            model = Autoencoder(input_size=34, hidden_sizes=hidden_sizes)
             model.load_state_dict(checkpoint['model_state_dict'])
+            mean = checkpoint['mean'].to(self.device)
+            std = checkpoint['std'].to(self.device)
+            model_type = 'autoencoder'
         else:
-            model.load_state_dict(checkpoint)
+            # Binary classifier model
+            model = NeuralNet(input_size=34, hidden_size=256, num_classes=1)
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                model.load_state_dict(checkpoint)
+            mean = None
+            std = None
+            model_type = 'binary_classifier'
         
         model.to(self.device)
-        return model
+        return model, model_type, mean, std
     
     def predict(self, keypoints) -> Tuple[str, float]:
         """
         Predict class for given keypoints.
+        
+        For autoencoder: returns 'standing' with confidence based on reconstruction error
+        For binary classifier: returns 'standing' or 'fallen' with probability confidence
         
         Args:
             keypoints: Array of keypoints, shape (34,) with format [x1,y1,x2,y2,...,x17,y17]
@@ -463,7 +720,7 @@ class KeypointClassifier:
         
         Returns:
             Tuple of (predicted_label, confidence)
-            - predicted_label: 'standing' or 'fallen'
+            - predicted_label: 'standing' (or 'fallen' for binary classifier)
             - confidence: Confidence score between 0 and 1
         """
         # Convert input to tensor
@@ -480,22 +737,43 @@ class KeypointClassifier:
         # Move to device
         keypoints = keypoints.to(self.device)
         
-        # Run inference
+        if self.model_type == 'autoencoder':
+            return self._predict_autoencoder(keypoints)
+        else:
+            return self._predict_binary(keypoints)
+    
+    def _predict_autoencoder(self, keypoints):
+        """Predict using autoencoder (anomaly detection)."""
+        with torch.no_grad():
+            # Normalize input
+            keypoints_norm = (keypoints - self.mean) / self.std
+            
+            # Get reconstruction
+            reconstructed = self.model(keypoints_norm)
+            
+            # Calculate reconstruction error (MSE)
+            mse = nn.functional.mse_loss(reconstructed, keypoints_norm, reduction='none').mean(dim=1)
+            reconstruction_error = mse.item()
+            
+            # Convert reconstruction error to confidence
+            # Lower error = higher confidence (more "standing-like")
+            # Use exponential decay to map error to [0, 1]
+            # Tuned so that typical errors (~0.1-0.5) map to reasonable confidences
+            confidence = np.exp(-reconstruction_error * 2.0)
+            confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
+        
+        return 'standing', confidence
+    
+    def _predict_binary(self, keypoints):
+        """Predict using binary classifier."""
         with torch.no_grad():
             output = self.model(keypoints)
             logit = output.squeeze().item()
             probability = torch.sigmoid(output.squeeze()).item()
         
-        # Debug logging
-        print(f"[DEBUG] Input keypoints stats - min: {keypoints.min().item():.4f}, max: {keypoints.max().item():.4f}, mean: {keypoints.mean().item():.4f}")
-        print(f"[DEBUG] Model output (logit): {logit:.4f}")
-        print(f"[DEBUG] Sigmoid probability: {probability:.4f}")
-        
         # Get prediction (threshold at 0.5)
         predicted_class = 1 if probability > 0.5 else 0
         confidence = probability if predicted_class == 1 else (1 - probability)
-        
-        print(f"[DEBUG] Predicted class: {predicted_class}, Confidence: {confidence:.4f}")
         
         return self.classes[predicted_class], confidence
     
