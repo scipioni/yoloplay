@@ -106,10 +106,10 @@ class KeypointDataset(Dataset):
         if not os.path.exists(csv_file):
             raise FileNotFoundError(f"CSV file {csv_file} does not exist")
 
-        with open(csv_file, "r") as f:
+        with open(csv_file) as f:
             reader = csv.reader(f)
             for row in reader:
-                if len(row) != 35:  # 34 coordinates + 1 label
+                if len(row) != 35:  # 1 label + 17 coordinates x,y
                     print(f"Warning: Invalid row length {len(row)}, expected 35")
                     continue
                 try:
@@ -408,32 +408,171 @@ def main():
     )
 
 
-# class KeypointClassification:
-#     def __init__(self, path_model):
-#         self.path_model = path_model
-#         self.classes = ['Stand']
-#         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#         self.load_model()
+class KeypointClassifier:
+    """
+    Classifier for pose keypoints using trained neural network.
+    Predicts binary classification: standing (0) or fallen (1).
+    """
+    
+    def __init__(self, model_path: str, device: str = "auto"):
+        """
+        Initialize the keypoint classifier.
+        
+        Args:
+            model_path: Path to the trained model (.pt file)
+            device: Device to run inference on ('auto', 'cpu', or 'cuda')
+        """
+        self.model_path = model_path
+        self.classes = {0: 'standing', 1: 'fallen'}
+        
+        # Set device
+        if device == "auto":
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        
+        # Load model
+        self.model = self._load_model()
+        self.model.eval()  # Set to evaluation mode
+        
+    def _load_model(self) -> NeuralNet:
+        """Load the trained model from file."""
+        if not os.path.exists(self.model_path):
+            raise FileNotFoundError(f"Model file not found: {self.model_path}")
+        
+        # Initialize model architecture
+        model = NeuralNet(input_size=34, hidden_size=256, num_classes=1)
+        
+        # Load state dict (handle both direct state dict and checkpoint format)
+        checkpoint = torch.load(self.model_path, map_location=self.device)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint)
+        
+        model.to(self.device)
+        return model
+    
+    def predict(self, keypoints) -> Tuple[str, float]:
+        """
+        Predict class for given keypoints.
+        
+        Args:
+            keypoints: Array of keypoints, shape (34,) with format [x1,y1,x2,y2,...,x17,y17]
+                      Can be numpy array, list, or torch tensor
+        
+        Returns:
+            Tuple of (predicted_label, confidence)
+            - predicted_label: 'standing' or 'fallen'
+            - confidence: Confidence score between 0 and 1
+        """
+        # Convert input to tensor
+        if not isinstance(keypoints, torch.Tensor):
+            keypoints = torch.tensor(keypoints, dtype=torch.float32)
+        
+        # Ensure correct shape
+        if keypoints.dim() == 1:
+            keypoints = keypoints.unsqueeze(0)  # Add batch dimension
+        
+        if keypoints.shape[1] != 34:
+            raise ValueError(f"Expected 34 keypoint coordinates, got {keypoints.shape[1]}")
+        
+        # Move to device
+        keypoints = keypoints.to(self.device)
+        
+        # Run inference
+        with torch.no_grad():
+            output = self.model(keypoints)
+            logit = output.squeeze().item()
+            probability = torch.sigmoid(output.squeeze()).item()
+        
+        # Debug logging
+        print(f"[DEBUG] Input keypoints stats - min: {keypoints.min().item():.4f}, max: {keypoints.max().item():.4f}, mean: {keypoints.mean().item():.4f}")
+        print(f"[DEBUG] Model output (logit): {logit:.4f}")
+        print(f"[DEBUG] Sigmoid probability: {probability:.4f}")
+        
+        # Get prediction (threshold at 0.5)
+        predicted_class = 1 if probability > 0.5 else 0
+        confidence = probability if predicted_class == 1 else (1 - probability)
+        
+        print(f"[DEBUG] Predicted class: {predicted_class}, Confidence: {confidence:.4f}")
+        
+        return self.classes[predicted_class], confidence
+    
+    def predict_batch(self, keypoints_batch) -> List[Tuple[str, float]]:
+        """
+        Predict classes for a batch of keypoints.
+        
+        Args:
+            keypoints_batch: Array of keypoints, shape (N, 34)
+        
+        Returns:
+            List of tuples (predicted_label, confidence) for each sample
+        """
+        # Convert input to tensor
+        if not isinstance(keypoints_batch, torch.Tensor):
+            keypoints_batch = torch.tensor(keypoints_batch, dtype=torch.float32)
+        
+        if keypoints_batch.shape[1] != 34:
+            raise ValueError(f"Expected 34 keypoint coordinates, got {keypoints_batch.shape[1]}")
+        
+        # Move to device
+        keypoints_batch = keypoints_batch.to(self.device)
+        
+        # Run inference
+        with torch.no_grad():
+            outputs = self.model(keypoints_batch)
+            probabilities = torch.sigmoid(outputs.squeeze())
+        
+        # Get predictions
+        results = []
+        for prob in probabilities:
+            prob_value = prob.item()
+            predicted_class = 1 if prob_value > 0.5 else 0
+            confidence = prob_value if predicted_class == 1 else (1 - prob_value)
+            results.append((self.classes[predicted_class], confidence))
+        
+        return results
+    
+    def __call__(self, keypoints) -> Tuple[str, float]:
+        """
+        Convenience method to allow calling the classifier directly.
+        
+        Args:
+            keypoints: Array of keypoints, shape (34,)
+        
+        Returns:
+            Tuple of (predicted_label, confidence)
+        """
+        return self.predict(keypoints)
 
-#     def load_model(self):
-#         self.model = NeuralNet()
-#         self.model.load_state_dict(
-#             torch.load(self.path_model, map_location=self.device)
-#         )
-#     def __call__(self, input_keypoint):
-#         if not type(input_keypoint) == torch.Tensor:
-#             input_keypoint = torch.tensor(
-#                 input_keypoint, dtype=torch.float32
-#             )
-#         out = self.model(input_keypoint)
-#         _, predict = torch.max(out, -1)
-#         label_predict = self.classes[predict]
-#         return label_predict
 
-# if __name__ == '__main__':
-#     keypoint_classification = KeypointClassification(
-#         path_model='/Users/alimustofa/Me/source-code/AI/YoloV8_Pose_Classification/models/pose_classification.pt'
-#     )
-#     dummy_input = torch.randn(23)
-#     classification = keypoint_classification(dummy_input)
-#     print(classification)
+if __name__ == '__main__':
+    import sys
+    
+    # Example usage
+    if len(sys.argv) > 1 and sys.argv[1] == 'test':
+        # Test the classifier with dummy data
+        model_path = "models/pose_classification_best.pt"
+        
+        if os.path.exists(model_path):
+            classifier = KeypointClassifier(model_path)
+            
+            # Create dummy keypoints (34 coordinates)
+            dummy_keypoints = np.random.randn(34)
+            
+            # Single prediction
+            label, confidence = classifier(dummy_keypoints)
+            print(f"Prediction: {label} (confidence: {confidence:.2%})")
+            
+            # Batch prediction
+            dummy_batch = np.random.randn(5, 34)
+            results = classifier.predict_batch(dummy_batch)
+            print("\nBatch predictions:")
+            for i, (label, conf) in enumerate(results):
+                print(f"  Sample {i+1}: {label} (confidence: {conf:.2%})")
+        else:
+            print(f"Model not found: {model_path}")
+            print("Please train a model first using: yoloplay_train --csv data/train.csv")
+    else:
+        main()

@@ -5,8 +5,10 @@ import time
 from typing import Any, Dict, Optional
 
 import cv2
+import numpy as np
 
 from .calibration import Calibration
+from .classification import KeypointClassifier
 from .config import IMAGE_EXTENSIONS, Config
 from .detectors import MediaPipePoseDetector, PoseDetector, YOLOPoseDetector
 from .frame_providers import (
@@ -33,6 +35,7 @@ class PoseProcessor:
         load_clusters: Optional[str] = None,
         save: Optional[str] = None,
         min_confidence: float = 0.55,
+        classifier_path: Optional[str] = None,
     ):
         """
         Initialize the pose processor.
@@ -45,6 +48,7 @@ class PoseProcessor:
             load_clusters: Path to cluster data file to load
             save: Path to save keypoints data to JSON file
             min_confidence: Minimum confidence threshold for filtering keypoints
+            classifier_path: Path to trained classification model for keypoint classification
         """
         self.detector = detector
         self.frame_provider = frame_provider
@@ -57,6 +61,16 @@ class PoseProcessor:
         self.display_available = self._check_display_available()
         self.keypoints_data = []  # List to store all keypoints data
         self.csv_file = None  # CSV file handle for saving keypoints
+        
+        # Load classifier if specified
+        self.classifier = None
+        if classifier_path:
+            try:
+                self.classifier = KeypointClassifier(classifier_path)
+                print(f"Loaded classifier from: {classifier_path}")
+            except Exception as e:
+                print(f"Warning: Failed to load classifier: {e}")
+                self.classifier = None
 
         # Load cluster data if specified
         if load_clusters:
@@ -127,6 +141,15 @@ class PoseProcessor:
 
                 # Filter keypoints by confidence
                 keypoints = keypoints.filter_by_confidence(self.min_confidence)
+                
+                # Classify keypoints if classifier is loaded
+                classification_label = None
+                classification_confidence = None
+                if self.classifier and keypoints.data is not None and len(keypoints.data) > 0:
+                    for kpts_xy in keypoints.get_kpts_xy():
+                        classification_label, classification_confidence = self.classifier(kpts_xy)
+                    
+                        print(f"Classification: {classification_label} (confidence: {classification_confidence:.2%})")
 
                 # Collect keypoints data if save is enabled
                 if self.save:
@@ -175,6 +198,21 @@ class PoseProcessor:
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.7,
                             (0, 255, 0),
+                            2,
+                        )
+
+                    # Add classification result to frame if available
+                    if classification_label is not None:
+                        # Determine color based on classification
+                        color = (0, 255, 0) if classification_label == 'standing' else (0, 0, 255)
+                        text = f"Pose: {classification_label.upper()} ({classification_confidence:.1%})"
+                        cv2.putText(
+                            annotated_frame,
+                            text,
+                            (10, 90),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            color,
                             2,
                         )
 
@@ -431,6 +469,7 @@ def main():
         load_clusters=config.load_clusters,
         save=config.save,
         min_confidence=config.min_confidence,
+        classifier_path=config.classifier,
     )
     processor.run()
 

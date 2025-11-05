@@ -413,6 +413,20 @@ class Keypoints:
             except Exception as e:
                 print(f"Error saving keypoints to CSV: {e}")
 
+    def get_kpts_xy(self):
+        if self.data is None:
+            return []
+        result = []
+        for keypoints in self.data:
+            kpts_xy = []
+            for point in keypoints:
+                kpts_xy.append(point[0])
+                kpts_xy.append(point[1])
+            result.append(kpts_xy)
+        return result
+
+
+
 
 class PoseDetector(ABC):
     """Abstract base class for pose detectors."""

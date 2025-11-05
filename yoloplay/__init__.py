@@ -14,6 +14,7 @@ from .frame_providers import (
     PlaybackMode,
 )
 from .main import PoseProcessor
+from .classification import KeypointClassifier, NeuralNet
 
 
 __all__ = [
@@ -30,6 +31,9 @@ __all__ = [
     "PlaybackMode",
     # Main Processor
     "PoseProcessor",
+    # Classification
+    "KeypointClassifier",
+    "NeuralNet",
 ]
 
 __version__ = "0.2.0"

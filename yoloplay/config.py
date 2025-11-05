@@ -17,6 +17,7 @@ class Config:
         self.load_clusters: Optional[str] = None
         self.save: Optional[str] = None
         self.min_confidence: float = 0.55
+        self.classifier: Optional[str] = None
 
     @classmethod
     def from_args(cls) -> "Config":
@@ -86,6 +87,11 @@ class Config:
             default=0.55,
             help="Minimum confidence threshold for filtering keypoints (default: 0.55)",
         )
+        parser.add_argument(
+            "--classifier",
+            type=str,
+            help="Path to trained classification model (.pt file) for keypoint classification",
+        )
 
         args = parser.parse_args()
 
@@ -101,6 +107,7 @@ class Config:
         config.load_clusters = args.load_clusters
         config.save = args.save
         config.min_confidence = args.min_confidence
+        config.classifier = args.classifier
 
         return config
 

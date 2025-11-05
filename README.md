@@ -85,6 +85,12 @@ Options:
   --video PATH                 Path to video file
   --images PATH [PATH ...]     List of image files
   --mode {play,step}           Playback mode for video/images (default: play)
+  --classifier PATH            Path to trained classification model (.pt file)
+  --min-confidence FLOAT       Minimum confidence threshold for keypoints (default: 0.55)
+  --debug                      Show detailed debug information
+  --calibrate PATH             Save calibration data to specified file
+  --load-clusters PATH         Load cluster data from specified file
+  --save PATH                  Save keypoints to specified CSV file
 ```
 
 ### Examples
@@ -92,7 +98,23 @@ Options:
 Create dataset for training:
 ```bash
 yoloplay --video data/calibration.mkv --save data/train.csv
+yolotrain --csv data/train.csv
+yoloplay --video data/office.mkv --classifier  classification_best.pt
 ```
+
+Use trained classifier for real-time pose classification:
+```bash
+# With video file
+yoloplay --video data/office.mkv --classifier models/pose_classification_best.pt
+
+# With camera
+yoloplay --camera 0 --classifier models/pose_classification_best.pt
+
+# With images
+yoloplay --images data/fallen/*.jpg --classifier models/pose_classification_best.pt
+```
+
+The classifier will display the pose classification (standing/fallen) and confidence on the video feed in real-time.
 
 Train pose classification model (with validation and early stopping):
 ```bash
@@ -219,6 +241,39 @@ fall_detector = YOLOFallDetector()  # or MediaPipeFallDetector()
 processor = PoseProcessor(detector, frame_provider, fall_detector)
 processor.run()
 ```
+### Keypoint Classification
+
+Use the trained model to classify pose keypoints:
+
+```python
+from yoloplay import KeypointClassifier
+import numpy as np
+
+# Load trained classifier
+classifier = KeypointClassifier("models/pose_classification_best.pt")
+
+# Single prediction
+keypoints = np.array([...])  # 34 values: x1,y1,x2,y2,...,x17,y17
+label, confidence = classifier(keypoints)
+print(f"Prediction: {label} (confidence: {confidence:.2%})")
+# Output: Prediction: standing (confidence: 95.23%)
+
+# Batch prediction
+keypoints_batch = np.array([...])  # Shape: (N, 34)
+results = classifier.predict_batch(keypoints_batch)
+for i, (label, conf) in enumerate(results):
+    print(f"Sample {i}: {label} ({conf:.2%})")
+```
+
+**KeypointClassifier API:**
+- `predict(keypoints)`: Classify single keypoint array (34 values)
+- `predict_batch(keypoints_batch)`: Classify multiple keypoint arrays  
+- `__call__(keypoints)`: Shorthand for `predict()`
+
+**Returns:**
+- `label`: 'standing' or 'fallen'
+- `confidence`: Probability score (0.0 to 1.0)
+
 
 ## Extending the Application
 
