@@ -1,7 +1,3 @@
-"""
-Pose detection module with different detector implementations.
-"""
-
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Union
 
@@ -119,6 +115,13 @@ class Keypoints:
     def original_landmarks(self) -> Any:
         """Get the original MediaPipe landmarks object."""
         return self._original_landmarks
+
+    @property
+    def person_confidence(self) -> float:
+        """Get the average confidence/visibility for the person."""
+        if self._keypoints is None:
+            return 0.0
+        return np.mean(self._keypoints[:, 2])
 
     @property
     def num_persons(self) -> int:
@@ -493,6 +496,38 @@ class YOLOPoseDetector(PoseDetector):
                             lineType=cv2.LINE_AA,
                         )
 
+                # Calculate bounding box from keypoints for this person
+                valid_kpts = person_kpts[person_kpts[:, 2] > 0.5]  # Only use high confidence keypoints
+                if len(valid_kpts) > 0:
+                    x_coords = valid_kpts[:, 0]
+                    y_coords = valid_kpts[:, 1]
+
+                    # Convert normalized coordinates to pixel coordinates
+                    h, w = frame.shape[:2]
+                    x_min = int(min(x_coords) * w)
+                    x_max = int(max(x_coords) * w)
+                    y_min = int(min(y_coords) * h)
+                    y_max = int(max(y_coords) * h)
+
+                    # Draw bounding box
+                    cv2.rectangle(
+                        annotated_frame, (x_min, y_min), (x_max, y_max), (128, 128, 128), 2
+                    )
+
+                    # Add confidence text on the bounding box
+                    confidence = np.mean(person_kpts[:, 2])
+                    text = f"Conf: {confidence:.2f}"
+                    cv2.putText(
+                        annotated_frame,
+                        text,
+                        (x_min, y_min - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
         return annotated_frame
 
 
@@ -590,6 +625,20 @@ class MediaPipePoseDetector(PoseDetector):
                 cv2.rectangle(
                     annotated_frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 3
                 )
+
+            # Add confidence text on the bounding box
+            confidence = keypoints.person_confidence
+            text = f"Conf: {confidence:.2f}"
+            cv2.putText(
+                annotated_frame,
+                text,
+                (x_min, y_min - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
 
             # Draw pose landmarks and connections with default colors
             self.mp_drawing.draw_landmarks(
