@@ -16,9 +16,10 @@ class Config:
         self.calibrate: bool = False
         self.load_clusters: Optional[str] = None
         self.save: Optional[str] = None
+        self.min_confidence: float = 0.55
 
     @classmethod
-    def from_args(cls) -> 'Config':
+    def from_args(cls) -> "Config":
         """Parse command line arguments and return a Config instance."""
         parser = argparse.ArgumentParser(
             description="Pose detection with YOLO or MediaPipe"
@@ -33,7 +34,7 @@ class Config:
         parser.add_argument(
             "--model",
             type=str,
-            #default="yolov8n-pose.pt",
+            # default="yolov8n-pose.pt",
             default="yolo11n-pose.pt",
             help="YOLO Pose model path (default: yolov8n-pose.pt)",
         )
@@ -79,6 +80,12 @@ class Config:
             type=str,
             help="Save all keypoints to specified JSON file",
         )
+        parser.add_argument(
+            "--min-confidence",
+            type=float,
+            default=0.55,
+            help="Minimum confidence threshold for filtering keypoints (default: 0.55)",
+        )
 
         args = parser.parse_args()
 
@@ -93,6 +100,7 @@ class Config:
         config.calibrate = args.calibrate
         config.load_clusters = args.load_clusters
         config.save = args.save
+        config.min_confidence = args.min_confidence
 
         return config
 

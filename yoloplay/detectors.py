@@ -39,6 +39,7 @@ class Keypoints:
         keypoints: Union[np.ndarray, Any],
         source: str = "yolo",
         image_shape: Optional[tuple] = None,
+        normalize=True,
     ):
         """
         Initialize keypoints from YOLO or MediaPipe data.
@@ -50,18 +51,21 @@ class Keypoints:
         """
         self.source = source.lower()
         self.image_shape = image_shape
-        self._keypoints = None
         self._original_landmarks = None  # Store original MediaPipe landmarks
 
-        if self.source == "yolo":
-            self._normalize_yolo_keypoints(keypoints)
-        elif self.source == "mediapipe":
-            self._original_landmarks = keypoints  # Store original landmarks
-            self._normalize_mediapipe_keypoints(keypoints)
+        if normalize:
+            self._keypoints = None
+            if self.source == "yolo":
+                self._normalize_yolo_keypoints(keypoints)
+            elif self.source == "mediapipe":
+                self._original_landmarks = keypoints  # Store original landmarks
+                self._normalize_mediapipe_keypoints(keypoints)
+            else:
+                raise ValueError(
+                    f"Unsupported source: {source}. Must be 'yolo' or 'mediapipe'"
+                )
         else:
-            raise ValueError(
-                f"Unsupported source: {source}. Must be 'yolo' or 'mediapipe'"
-            )
+            self._keypoints = keypoints
 
     def _normalize_yolo_keypoints(self, keypoints: np.ndarray) -> None:
         """
@@ -214,6 +218,56 @@ class Keypoints:
 
         return np.array([0.0, 0.0, 0.0])
 
+    def filter_by_confidence(self, min_confidence: float) -> "Keypoints":
+        """
+        Filter keypoints based on person confidence.
+
+        Args:
+            min_confidence: Minimum confidence threshold
+
+        Returns:
+            New Keypoints object with filtered data
+        """
+        if self._keypoints is None:
+            return self
+
+        # For YOLO, filter persons based on average confidence
+        if self.source == "yolo":
+            if len(self._keypoints.shape) == 3:  # Multiple persons
+                # Calculate average confidence for each person
+                person_confidences = np.mean(self._keypoints[:, :, 2], axis=1)
+
+                # Filter persons above threshold
+                valid_persons = person_confidences >= min_confidence
+                if np.any(valid_persons):
+                    filtered_keypoints = self._keypoints[valid_persons]
+                else:
+                    # No persons meet threshold, return empty keypoints
+                    filtered_keypoints = np.zeros((0, 17, 3))
+            else:
+                # Single person
+                avg_conf = np.mean(self._keypoints[:, 2])
+                if avg_conf >= min_confidence:
+                    filtered_keypoints = self._keypoints
+                else:
+                    filtered_keypoints = np.zeros((17, 3))
+        else:
+            # MediaPipe - single person, check overall confidence
+            avg_conf = np.mean(self._keypoints[:, 2])
+            if avg_conf >= min_confidence:
+                filtered_keypoints = self._keypoints
+            else:
+                filtered_keypoints = np.zeros((33, 3))
+
+        # Create new Keypoints object with filtered data
+        filtered = Keypoints(
+            filtered_keypoints,
+            source=self.source,
+            image_shape=self.image_shape,
+            normalize=False,
+        )
+        return filtered
+
     def print_keypoints(self) -> None:
         """
         Print keypoints in a readable format.
@@ -300,7 +354,6 @@ class Keypoints:
                 # Assuming keypoints are in shape (num_points, 3) where 3 is (x, y, confidence)
                 row = [label]
                 for keypoints in person_kpts_list:
-                    print(len(keypoints))
                     for point in keypoints:
                         row.append(point[0])
                         row.append(point[1])
@@ -497,7 +550,9 @@ class YOLOPoseDetector(PoseDetector):
                         )
 
                 # Calculate bounding box from keypoints for this person
-                valid_kpts = person_kpts[person_kpts[:, 2] > 0.5]  # Only use high confidence keypoints
+                valid_kpts = person_kpts[
+                    person_kpts[:, 2] > 0.5
+                ]  # Only use high confidence keypoints
                 if len(valid_kpts) > 0:
                     x_coords = valid_kpts[:, 0]
                     y_coords = valid_kpts[:, 1]
@@ -511,7 +566,11 @@ class YOLOPoseDetector(PoseDetector):
 
                     # Draw bounding box
                     cv2.rectangle(
-                        annotated_frame, (x_min, y_min), (x_max, y_max), (128, 128, 128), 2
+                        annotated_frame,
+                        (x_min, y_min),
+                        (x_max, y_max),
+                        (128, 128, 128),
+                        2,
                     )
 
                     # Add confidence text on the bounding box
@@ -524,7 +583,7 @@ class YOLOPoseDetector(PoseDetector):
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.5,
                         (255, 255, 255),
-                        2,
+                        1,
                         cv2.LINE_AA,
                     )
 
@@ -636,7 +695,7 @@ class MediaPipePoseDetector(PoseDetector):
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.5,
                 (255, 255, 255),
-                2,
+                1,
                 cv2.LINE_AA,
             )
 

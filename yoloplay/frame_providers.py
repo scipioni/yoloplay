@@ -12,6 +12,7 @@ import numpy as np
 
 class PlaybackMode(Enum):
     """Playback modes for video and image sources."""
+
     STEP = "step"  # Step through frames one by one
     PLAY = "play"  # Continuous playback
 
@@ -245,7 +246,9 @@ class ImageFrameProvider(FrameProvider):
             if self._step_requested:
                 self._step_requested = False
                 if self.current_index < len(self.image_paths):
-                    self._current_frame = cv2.imread(self.image_paths[self.current_index])
+                    self._current_frame = cv2.imread(
+                        self.image_paths[self.current_index]
+                    )
                     self.current_index += 1
             return True, self._current_frame
 

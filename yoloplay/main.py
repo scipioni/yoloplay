@@ -32,6 +32,7 @@ class PoseProcessor:
         calibrate: str = "",
         load_clusters: Optional[str] = None,
         save: Optional[str] = None,
+        min_confidence: float = 0.55,
     ):
         """
         Initialize the pose processor.
@@ -43,6 +44,7 @@ class PoseProcessor:
             calibrate: Whether to enable calibration mode
             load_clusters: Path to cluster data file to load
             save: Path to save keypoints data to JSON file
+            min_confidence: Minimum confidence threshold for filtering keypoints
         """
         self.detector = detector
         self.frame_provider = frame_provider
@@ -50,6 +52,7 @@ class PoseProcessor:
         self.calibrate = calibrate
         self.load_clusters = load_clusters
         self.save = save
+        self.min_confidence = min_confidence
         self.calibration = Calibration()
         self.display_available = self._check_display_available()
         self.keypoints_data = []  # List to store all keypoints data
@@ -121,6 +124,9 @@ class PoseProcessor:
 
                 # Detect pose
                 keypoints = self.detector.detect(frame)
+
+                # Filter keypoints by confidence
+                keypoints = keypoints.filter_by_confidence(self.min_confidence)
 
                 # Collect keypoints data if save is enabled
                 if self.save:
@@ -424,6 +430,7 @@ def main():
         calibrate=config.calibrate,
         load_clusters=config.load_clusters,
         save=config.save,
+        min_confidence=config.min_confidence,
     )
     processor.run()
 

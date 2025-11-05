@@ -10,7 +10,8 @@ import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 import warnings
-warnings.filterwarnings('ignore')
+
+warnings.filterwarnings("ignore")
 
 
 class Calibration:
@@ -47,7 +48,7 @@ class Calibration:
                         "count": int(person_kpts.shape[0]),
                         "data": person_kpts_list,
                         "format": f"{keypoints_data.source.upper()} keypoints (normalized x, y, confidence)",
-                    }
+                    },
                 }
 
                 self.keypoints.append(entry)
@@ -81,7 +82,12 @@ class Calibration:
         return {
             "total_frames": total_frames,
             "duration": duration,
-            "avg_keypoints_per_frame": sum(kp["keypoints"]["count"] for kp in self.keypoints) / total_frames if total_frames > 0 else 0
+            "avg_keypoints_per_frame": sum(
+                kp["keypoints"]["count"] for kp in self.keypoints
+            )
+            / total_frames
+            if total_frames > 0
+            else 0,
         }
 
     def find_optimal_k(self, max_k: int = 10) -> Tuple[int, float]:
@@ -136,31 +142,35 @@ class Calibration:
 
         return best_k, best_score
 
-    def save_clusters(self, filename: str = "clusters.pkl", k: Optional[int] = None) -> None:
+    def save_clusters(
+        self, filename: str = "clusters.pkl", k: Optional[int] = None
+    ) -> None:
         """
         Save clustering results and KMeans model to files.
 
         Args:
             filename: Name of the file to save cluster data to (JSON) and model (PKL)
         """
-        if not hasattr(self, '_last_clustering_result'):
+        if not hasattr(self, "_last_clustering_result"):
             print("No clustering results available. Run perform_clustering() first.")
             self.perform_clustering(k=k)
 
         # Save clustering results to JSON
-        json_filename = filename.replace('.pkl', '.json')
-        with open(json_filename, 'w') as f:
+        json_filename = filename.replace(".pkl", ".json")
+        with open(json_filename, "w") as f:
             json.dump(self._last_clustering_result, f, indent=2)
 
         # Save KMeans model to pickle file
-        if hasattr(self, '_kmeans_model'):
-            with open(filename, 'wb') as f:
+        if hasattr(self, "_kmeans_model"):
+            with open(filename, "wb") as f:
                 pickle.dump(self._kmeans_model, f)
 
         # Print summary
         result = self._last_clustering_result
         print(f"Cluster data saved to {json_filename} and {filename}")
-        print(f"Summary: {result['n_clusters']} clusters, silhouette score: {result['silhouette_score']:.3f}, {result['total_frames']} frames")
+        print(
+            f"Summary: {result['n_clusters']} clusters, silhouette score: {result['silhouette_score']:.3f}, {result['total_frames']} frames"
+        )
 
     def load_clusters(self, filename: str = "clusters.pkl") -> Optional[Dict[str, Any]]:
         """
@@ -174,31 +184,38 @@ class Calibration:
         """
         try:
             # Load KMeans model from pickle file
-            with open(filename, 'rb') as f:
+            with open(filename, "rb") as f:
                 self._kmeans_model = pickle.load(f)
 
             # Load clustering results from JSON
-            json_filename = filename.replace('.pkl', '.json')
+            json_filename = filename.replace(".pkl", ".json")
             try:
-                with open(json_filename, 'r') as f:
+                with open(json_filename, "r") as f:
                     cluster_data = json.load(f)
                 self._last_clustering_result = cluster_data
             except FileNotFoundError:
                 # Fallback to reconstructing from centroids if JSON file not found
-                print(f"JSON file {json_filename} not found, reconstructing from model centroids")
+                print(
+                    f"JSON file {json_filename} not found, reconstructing from model centroids"
+                )
                 centroids = self._kmeans_model.cluster_centers_.tolist()
                 cluster_data = {
                     "n_clusters": len(centroids),
                     "silhouette_score": 0.0,  # Unknown
                     "total_frames": 0,  # Unknown
-                    "clusters": {f"cluster_{i}": {"centroid": centroids[i]} for i in range(len(centroids))},
-                    "inertia": self._kmeans_model.inertia_
+                    "clusters": {
+                        f"cluster_{i}": {"centroid": centroids[i]}
+                        for i in range(len(centroids))
+                    },
+                    "inertia": self._kmeans_model.inertia_,
                 }
                 self._last_clustering_result = cluster_data
 
             # Print summary
             print(f"Cluster data loaded from {filename} and {json_filename}")
-            print(f"Summary: {cluster_data['n_clusters']} clusters, silhouette score: {cluster_data['silhouette_score']:.3f}, {cluster_data['total_frames']} frames")
+            print(
+                f"Summary: {cluster_data['n_clusters']} clusters, silhouette score: {cluster_data['silhouette_score']:.3f}, {cluster_data['total_frames']} frames"
+            )
             return cluster_data
         except FileNotFoundError:
             print(f"Cluster file {filename} not found")
@@ -279,7 +296,7 @@ class Calibration:
                 "centroid": centroids[i].tolist(),
                 "frames": len(cluster_indices),
                 "timestamps": [timestamps[idx] for idx in cluster_indices],
-                "keypoints": [all_keypoints[idx] for idx in cluster_indices]
+                "keypoints": [all_keypoints[idx] for idx in cluster_indices],
             }
             clusters[f"cluster_{i}"] = cluster_data
 
@@ -288,7 +305,7 @@ class Calibration:
             "silhouette_score": silhouette,
             "total_frames": len(X),
             "clusters": clusters,
-            "inertia": kmeans.inertia_
+            "inertia": kmeans.inertia_,
         }
 
     def predict_cluster(self, keypoints_data) -> Optional[Dict[str, Any]]:
@@ -301,13 +318,13 @@ class Calibration:
         Returns:
             Dictionary with 'cluster' (int) and 'distance' (float) or None if no clustering model available
         """
-        if not hasattr(self, '_kmeans_model'):
+        if not hasattr(self, "_kmeans_model"):
             print("No clustering model available. Run perform_clustering() first.")
             return None
 
         if keypoints_data is None or keypoints_data.data is None:
             return None
-        
+
         try:
             # Take only the first person detected
             kp_data = keypoints_data.data
@@ -321,19 +338,18 @@ class Calibration:
                             flattened.extend(kp[:2])  # Only x, y coordinates
                     if flattened:
                         # Convert to numpy array and predict
-                        X_new = np.array([flattened], dtype=self._kmeans_model.cluster_centers_.dtype)
+                        X_new = np.array(
+                            [flattened], dtype=self._kmeans_model.cluster_centers_.dtype
+                        )
                         cluster = self._kmeans_model.predict(X_new)[0]
 
                         # Calculate distance to the assigned cluster centroid
                         centroid = self._kmeans_model.cluster_centers_[cluster]
                         distance = np.linalg.norm(X_new[0] - centroid)
 
-                        return {
-                            "cluster": int(cluster),
-                            "distance": float(distance)
-                        }
+                        return {"cluster": int(cluster), "distance": float(distance)}
             else:
-                print(type(kp_data),len(kp_data))
+                print(type(kp_data), len(kp_data))
 
         except Exception as e:
             print(f"Error predicting cluster: {e}")

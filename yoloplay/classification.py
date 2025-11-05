@@ -195,7 +195,7 @@ def main():
     parser.add_argument(
         "--model-path",
         type=str,
-        default="models/pose_classification.pt",
+        default="classification.pt",
         help="Path to save the trained model",
     )
     parser.add_argument(
