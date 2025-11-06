@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 import cv2
 import numpy as np
 
-from .calibration import Calibration
 from .classification import KeypointClassifier
 from .config import IMAGE_EXTENSIONS, Config
 from .detectors import MediaPipePoseDetector, PoseDetector, YOLOPoseDetector
@@ -19,6 +18,7 @@ from .frame_providers import (
     RTSPFrameProvider,
     VideoFrameProvider,
 )
+from .svm import OneClassSVMAnomalyDetector
 
 
 class PoseProcessor:
@@ -36,6 +36,7 @@ class PoseProcessor:
         save: Optional[str] = None,
         min_confidence: float = 0.55,
         classifier_path: Optional[str] = None,
+        svm_model_path: Optional[str] = None,
     ):
         """
         Initialize the pose processor.
@@ -44,11 +45,11 @@ class PoseProcessor:
             detector: Pose detector instance (YOLO or MediaPipe)
             frame_provider: Frame provider instance (camera, video, or images)
             show_debug_info: Whether to show detailed debug information
-            calibrate: Whether to enable calibration mode
             load_clusters: Path to cluster data file to load
             save: Path to save keypoints data to JSON file
             min_confidence: Minimum confidence threshold for filtering keypoints
             classifier_path: Path to trained classification model for keypoint classification
+            svm_model_path: Path to trained SVM anomaly detection model
         """
         self.detector = detector
         self.frame_provider = frame_provider
@@ -57,11 +58,10 @@ class PoseProcessor:
         self.load_clusters = load_clusters
         self.save = save
         self.min_confidence = min_confidence
-        self.calibration = Calibration()
         self.display_available = self._check_display_available()
         self.keypoints_data = []  # List to store all keypoints data
         self.csv_file = None  # CSV file handle for saving keypoints
-        
+
         # Load classifier if specified
         self.classifier = None
         if classifier_path:
@@ -72,9 +72,17 @@ class PoseProcessor:
                 print(f"Warning: Failed to load classifier: {e}")
                 self.classifier = None
 
-        # Load cluster data if specified
-        if load_clusters:
-            self.calibration.load_clusters(load_clusters)
+        # Load SVM anomaly detector if specified
+        self.svm_detector = None
+        if svm_model_path:
+            try:
+                self.svm_detector = OneClassSVMAnomalyDetector(
+                    model_path=svm_model_path
+                )
+                print(f"Loaded SVM anomaly detector from: {svm_model_path}")
+            except Exception as e:
+                print(f"Warning: Failed to load SVM detector: {e}")
+                self.svm_detector = None
 
         # Open CSV file for saving keypoints if save is enabled
         if save:
@@ -141,31 +149,47 @@ class PoseProcessor:
 
                 # Filter keypoints by confidence
                 keypoints = keypoints.filter_by_confidence(self.min_confidence)
-                
+
                 # Classify keypoints if classifier is loaded
                 classification_label = None
                 classification_confidence = None
-                if self.classifier and keypoints.data is not None and len(keypoints.data) > 0:
+                if (
+                    self.classifier
+                    and keypoints.data is not None
+                    and len(keypoints.data) > 0
+                ):
                     for kpts_xy in keypoints.get_kpts_xy():
-                        classification_label, classification_confidence = self.classifier(kpts_xy)
-                    
-                        print(f"Classification: {classification_label} (confidence: {classification_confidence:.2%})")
+                        classification_label, classification_confidence = (
+                            self.classifier(kpts_xy)
+                        )
+
+                        print(
+                            f"Classification: {classification_label} (confidence: {classification_confidence:.2%})"
+                        )
+
+                # Detect anomalies if SVM detector is loaded
+                anomaly_detected = None
+                anomaly_score = None
+                if (
+                    self.svm_detector
+                    and keypoints.data is not None
+                    and len(keypoints.data) > 0
+                ):
+                    for kpts_xy in keypoints.get_kpts_xy():
+                        # Convert to numpy array and flatten for SVM (34,)
+                        keypoints_array = np.array(kpts_xy).flatten()
+                        anomaly_detected, anomaly_score = self.svm_detector.detect(
+                            keypoints_array
+                        )
+
+                        status = "ANOMALY" if anomaly_detected else "NORMAL"
+                        print(
+                            f"SVM Anomaly Detection: {status} (score: {anomaly_score:.4f})"
+                        )
 
                 # Collect keypoints data if save is enabled
                 if self.save:
                     keypoints.save(self.csv_writer)
-
-                # Add keypoints to calibration if enabled
-                if self.calibrate:
-                    self.calibration.add_keypoints(keypoints)
-
-                # Predict cluster if cluster data is loaded
-                if self.load_clusters:
-                    prediction = self.calibration.predict_cluster(keypoints)
-                    if prediction is not None:
-                        print(
-                            f"Predicted cluster: {prediction['cluster']}, distance: {prediction['distance']:.3f}"
-                        )
 
                 # Output JSON debug information
                 if self.show_debug_info:
@@ -204,12 +228,32 @@ class PoseProcessor:
                     # Add classification result to frame if available
                     if classification_label is not None:
                         # Determine color based on classification
-                        color = (0, 255, 0) if classification_label == 'standing' else (0, 0, 255)
+                        color = (
+                            (0, 255, 0)
+                            if classification_label == "standing"
+                            else (0, 0, 255)
+                        )
                         text = f"Pose: {classification_label.upper()} ({classification_confidence:.1%})"
                         cv2.putText(
                             annotated_frame,
                             text,
                             (10, 90),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            color,
+                            2,
+                        )
+
+                    # Add anomaly detection result to frame if available
+                    if anomaly_detected is not None:
+                        # Determine color based on anomaly detection
+                        color = (0, 0, 255) if anomaly_detected else (0, 255, 0)
+                        status = "ANOMALY" if anomaly_detected else "NORMAL"
+                        text = f"SVM: {status} (score: {anomaly_score:.3f})"
+                        cv2.putText(
+                            annotated_frame,
+                            text,
+                            (10, 120),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.7,
                             color,
@@ -230,13 +274,6 @@ class PoseProcessor:
         except KeyboardInterrupt:
             print("Interrupted by user")
         finally:
-            # Save calibration data if enabled
-            if self.calibrate:
-                summary = self.calibration.get_summary()
-                print(f"Calibration completed: {summary}")
-                # self.calibration.save_to_file()
-                self.calibration.save_clusters(filename=self.calibrate, k=100)
-
             # Close CSV file if opened
             if self.csv_file:
                 self.csv_file.close()
@@ -470,6 +507,7 @@ def main():
         save=config.save,
         min_confidence=config.min_confidence,
         classifier_path=config.classifier,
+        svm_model_path=config.svm_model,
     )
     processor.run()
 

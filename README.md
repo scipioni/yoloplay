@@ -97,93 +97,12 @@ Options:
 
 Create dataset for training:
 ```bash
+# docker compose run --rm yoloplay
 yoloplay --video data/calibration.mkv --save data/train.csv
-yolotrain --csv data/train.csv
-yoloplay --video data/office.mkv --classifier  classification_best.pt
+yolotrain --csv data/train.csv --model-path data/svm.pkl [--grid-search]
+yoloplay --video data/office.mkv --svm-model data/svm.pkl
 ```
 
-Use trained classifier for real-time pose classification:
-```bash
-# With video file
-yoloplay --video data/office.mkv --classifier models/pose_classification_best.pt
-
-# With camera
-yoloplay --camera 0 --classifier models/pose_classification_best.pt
-
-# With images
-yoloplay --images data/fallen/*.jpg --classifier models/pose_classification_best.pt
-```
-
-The classifier will display the pose classification (standing/fallen) and confidence on the video feed in real-time.
-
-Train pose classification model (with validation and early stopping):
-```bash
-# Basic training with defaults (80/20 split, patience=10)
-yoloplay_train --csv data/train.csv --model-path models/pose_classification.pt
-
-# Advanced training with custom parameters
-yoloplay_train \
-  --csv data/train.csv \
-  --model-path models/pose_classification.pt \
-  --epochs 200 \
-  --batch-size 32 \
-  --learning-rate 0.001 \
-  --split-ratio 0.7 \
-  --patience 15 \
-  --dropout 0.3 \
-  --save-best-only
-```
-
-**Training Features:**
-- **Train/Validation Split:** Automatically splits data (default 80/20) with stratified sampling
-- **Early Stopping:** Stops training when validation loss stops improving (default patience: 10 epochs)
-- **Best Model Checkpointing:** Saves the best model based on validation performance
-- **Dropout Regularization:** Prevents overfitting with configurable dropout (default: 0.5)
-- **Reproducibility:** Use `--random-seed` for consistent splits
-
-**Training Arguments:**
-- `--csv`: Path to CSV file with keypoints and labels (required)
-- `--model-path`: Path to save trained model (default: classification.pt)
-- `--epochs`: Maximum training epochs (default: 100)
-- `--batch-size`: Batch size (default: 16)
-- `--learning-rate`: Learning rate (default: 0.001)
-- `--device`: Device to use: 'auto', 'cpu', or 'cuda' (default: auto)
-- `--split-ratio`: Train/val split ratio (default: 0.8)
-- `--patience`: Early stopping patience in epochs (default: 10)
-- `--random-seed`: Random seed for reproducibility (default: 42)
-- `--dropout`: Dropout rate for regularization (default: 0.5)
-- `--save-best-only`: Only save best model, not final model
-
-**Training Output:**
-```
-Training on device: cuda
-Loaded 1000 samples from CSV
-Train set: 800 samples, Val set: 200 samples
-
-Epoch 1/100
-  Train - Loss: 0.6931, Acc: 0.5125
-  Val   - Loss: 0.6823, Acc: 0.5300
-  ✓ Best model saved (val_loss: 0.6823)
-
-Epoch 2/100
-  Train - Loss: 0.5234, Acc: 0.7450
-  Val   - Loss: 0.5456, Acc: 0.7150
-  ✓ Best model saved (val_loss: 0.5456)
-
-...
-
-Epoch 45/100
-  Train - Loss: 0.1234, Acc: 0.9625
-  Val   - Loss: 0.3456, Acc: 0.8650
-
-Early stopping triggered at epoch 45
-Best validation loss: 0.3256
-
-Training completed!
-Best model (epoch 35) saved to models/pose_classification_best.pt
-  Train - Loss: 0.1456, Acc: 0.9500
-  Val   - Loss: 0.3256, Acc: 0.8750
-```
 
 ### Keyboard Controls
 

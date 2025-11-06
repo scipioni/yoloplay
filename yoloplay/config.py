@@ -18,6 +18,7 @@ class Config:
         self.save: Optional[str] = None
         self.min_confidence: float = 0.55
         self.classifier: Optional[str] = None
+        self.svm_model: Optional[str] = None
 
     @classmethod
     def from_args(cls) -> "Config":
@@ -92,6 +93,11 @@ class Config:
             type=str,
             help="Path to trained classification model (.pt file) for keypoint classification",
         )
+        parser.add_argument(
+            "--svm-model",
+            type=str,
+            help="Path to trained SVM anomaly detection model (.pkl file)",
+        )
 
         args = parser.parse_args()
 
@@ -108,6 +114,7 @@ class Config:
         config.save = args.save
         config.min_confidence = args.min_confidence
         config.classifier = args.classifier
+        config.svm_model = args.svm_model
 
         return config
 

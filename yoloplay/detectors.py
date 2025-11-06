@@ -426,8 +426,6 @@ class Keypoints:
         return result
 
 
-
-
 class PoseDetector(ABC):
     """Abstract base class for pose detectors."""
 

@@ -14,8 +14,8 @@ from sklearn.model_selection import train_test_split
 
 class EarlyStopping:
     """Early stopping to stop training when validation loss doesn't improve."""
-    
-    def __init__(self, patience=10, min_delta=0.0, mode='min'):
+
+    def __init__(self, patience=10, min_delta=0.0, mode="min"):
         """
         Args:
             patience: Number of epochs to wait for improvement
@@ -28,19 +28,19 @@ class EarlyStopping:
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        
+
     def __call__(self, val_metric):
         """
         Check if early stopping should be triggered.
-        
+
         Args:
             val_metric: Current validation metric value
-            
+
         Returns:
             bool: True if early stopping should be triggered
         """
-        score = -val_metric if self.mode == 'min' else val_metric
-        
+        score = -val_metric if self.mode == "min" else val_metric
+
         if self.best_score is None:
             self.best_score = score
         elif score < self.best_score + self.min_delta:
@@ -50,7 +50,7 @@ class EarlyStopping:
         else:
             self.best_score = score
             self.counter = 0
-        
+
         return self.early_stop
 
 
@@ -171,7 +171,7 @@ def train_model(
     if csv_file is not None:
         # Load from CSV
         dataset = KeypointDataset(csv_file=csv_file)
-    
+
     if len(dataset) == 0:
         raise ValueError("No valid training data found")
 
@@ -179,22 +179,26 @@ def train_model(
 
     # Extract labels for stratified splitting
     labels = [dataset[i][1].item() for i in range(len(dataset))]
-    
+
     # Split dataset into train and validation sets
     train_indices, val_indices = train_test_split(
         range(len(dataset)),
         test_size=1 - split_ratio,
         random_state=random_seed,
-        stratify=labels
+        stratify=labels,
     )
-    
+
     train_dataset = Subset(dataset, train_indices)
     val_dataset = Subset(dataset, val_indices)
-    
-    print(f"Train set: {len(train_dataset)} samples, Val set: {len(val_dataset)} samples")
-    
+
+    print(
+        f"Train set: {len(train_dataset)} samples, Val set: {len(val_dataset)} samples"
+    )
+
     if len(val_dataset) < 10:
-        print("Warning: Validation set is very small (< 10 samples). Consider using more data.")
+        print(
+            "Warning: Validation set is very small (< 10 samples). Consider using more data."
+        )
 
     # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
@@ -211,11 +215,11 @@ def train_model(
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # Initialize early stopping
-    early_stopping = EarlyStopping(patience=patience, mode='min')
-    
+    early_stopping = EarlyStopping(patience=patience, mode="min")
+
     # Best model tracking
-    best_val_loss = float('inf')
-    best_model_path = model_path.replace('.pt', '_best.pt')
+    best_val_loss = float("inf")
+    best_model_path = model_path.replace(".pt", "_best.pt")
 
     # Training loop
     for epoch in range(epochs):
@@ -281,16 +285,22 @@ def train_model(
         # Model checkpointing - save best model
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            os.makedirs(os.path.dirname(model_path) if os.path.dirname(model_path) else '.', exist_ok=True)
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': avg_train_loss,
-                'val_loss': avg_val_loss,
-                'train_acc': train_accuracy,
-                'val_acc': val_accuracy,
-            }, best_model_path)
+            os.makedirs(
+                os.path.dirname(model_path) if os.path.dirname(model_path) else ".",
+                exist_ok=True,
+            )
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "train_loss": avg_train_loss,
+                    "val_loss": avg_val_loss,
+                    "train_acc": train_accuracy,
+                    "val_acc": val_accuracy,
+                },
+                best_model_path,
+            )
             print(f"  ✓ Best model saved (val_loss: {avg_val_loss:.4f})")
 
         # Early stopping check
@@ -301,12 +311,16 @@ def train_model(
 
     # Load best model for final save
     checkpoint = torch.load(best_model_path, map_location=device_torch)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    
+    model.load_state_dict(checkpoint["model_state_dict"])
+
     print(f"\nTraining completed!")
     print(f"Best model (epoch {checkpoint['epoch'] + 1}) saved to {best_model_path}")
-    print(f"  Train - Loss: {checkpoint['train_loss']:.4f}, Acc: {checkpoint['train_acc']:.4f}")
-    print(f"  Val   - Loss: {checkpoint['val_loss']:.4f}, Acc: {checkpoint['val_acc']:.4f}")
+    print(
+        f"  Train - Loss: {checkpoint['train_loss']:.4f}, Acc: {checkpoint['train_acc']:.4f}"
+    )
+    print(
+        f"  Val   - Loss: {checkpoint['val_loss']:.4f}, Acc: {checkpoint['val_acc']:.4f}"
+    )
 
     # Save final model if requested
     if not save_best_only:
@@ -331,19 +345,19 @@ def main():
         "--epochs",
         type=int,
         default=10,
-        help="Maximum number of training epochs (default: 10)"
+        help="Maximum number of training epochs (default: 10)",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=16,
-        help="Batch size for training (default: 16)"
+        help="Batch size for training (default: 16)",
     )
     parser.add_argument(
         "--learning-rate",
         type=float,
         default=0.001,
-        help="Learning rate for optimizer (default: 0.001)"
+        help="Learning rate for optimizer (default: 0.001)",
     )
     parser.add_argument(
         "--device",
@@ -413,54 +427,54 @@ class KeypointClassifier:
     Classifier for pose keypoints using trained neural network.
     Predicts binary classification: standing (0) or fallen (1).
     """
-    
+
     def __init__(self, model_path: str, device: str = "auto"):
         """
         Initialize the keypoint classifier.
-        
+
         Args:
             model_path: Path to the trained model (.pt file)
             device: Device to run inference on ('auto', 'cpu', or 'cuda')
         """
         self.model_path = model_path
-        self.classes = {0: 'standing', 1: 'fallen'}
-        
+        self.classes = {0: "standing", 1: "fallen"}
+
         # Set device
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
-        
+
         # Load model
         self.model = self._load_model()
         self.model.eval()  # Set to evaluation mode
-        
+
     def _load_model(self) -> NeuralNet:
         """Load the trained model from file."""
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
-        
+
         # Initialize model architecture
         model = NeuralNet(input_size=34, hidden_size=256, num_classes=1)
-        
+
         # Load state dict (handle both direct state dict and checkpoint format)
         checkpoint = torch.load(self.model_path, map_location=self.device)
-        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['model_state_dict'])
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
         else:
             model.load_state_dict(checkpoint)
-        
+
         model.to(self.device)
         return model
-    
+
     def predict(self, keypoints) -> Tuple[str, float]:
         """
         Predict class for given keypoints.
-        
+
         Args:
             keypoints: Array of keypoints, shape (34,) with format [x1,y1,x2,y2,...,x17,y17]
                       Can be numpy array, list, or torch tensor
-        
+
         Returns:
             Tuple of (predicted_label, confidence)
             - predicted_label: 'standing' or 'fallen'
@@ -469,61 +483,69 @@ class KeypointClassifier:
         # Convert input to tensor
         if not isinstance(keypoints, torch.Tensor):
             keypoints = torch.tensor(keypoints, dtype=torch.float32)
-        
+
         # Ensure correct shape
         if keypoints.dim() == 1:
             keypoints = keypoints.unsqueeze(0)  # Add batch dimension
-        
+
         if keypoints.shape[1] != 34:
-            raise ValueError(f"Expected 34 keypoint coordinates, got {keypoints.shape[1]}")
-        
+            raise ValueError(
+                f"Expected 34 keypoint coordinates, got {keypoints.shape[1]}"
+            )
+
         # Move to device
         keypoints = keypoints.to(self.device)
-        
+
         # Run inference
         with torch.no_grad():
             output = self.model(keypoints)
             logit = output.squeeze().item()
             probability = torch.sigmoid(output.squeeze()).item()
-        
+
         # Debug logging
-        print(f"[DEBUG] Input keypoints stats - min: {keypoints.min().item():.4f}, max: {keypoints.max().item():.4f}, mean: {keypoints.mean().item():.4f}")
+        print(
+            f"[DEBUG] Input keypoints stats - min: {keypoints.min().item():.4f}, max: {keypoints.max().item():.4f}, mean: {keypoints.mean().item():.4f}"
+        )
         print(f"[DEBUG] Model output (logit): {logit:.4f}")
         print(f"[DEBUG] Sigmoid probability: {probability:.4f}")
-        
+
         # Get prediction (threshold at 0.5)
         predicted_class = 1 if probability > 0.5 else 0
         confidence = probability if predicted_class == 1 else (1 - probability)
-        
-        print(f"[DEBUG] Predicted class: {predicted_class}, Confidence: {confidence:.4f}")
-        
+
+        print(
+            f"[DEBUG] Predicted class: {predicted_class}, Confidence: {confidence:.4f}"
+        )
+
         return self.classes[predicted_class], confidence
-    
+
     def predict_batch(self, keypoints_batch) -> List[Tuple[str, float]]:
         """
         Predict classes for a batch of keypoints.
-        
+
         Args:
             keypoints_batch: Array of keypoints, shape (N, 34)
-        
+
         Returns:
             List of tuples (predicted_label, confidence) for each sample
         """
         # Convert input to tensor
         if not isinstance(keypoints_batch, torch.Tensor):
             keypoints_batch = torch.tensor(keypoints_batch, dtype=torch.float32)
-        
+
         if keypoints_batch.shape[1] != 34:
-            raise ValueError(f"Expected 34 keypoint coordinates, got {keypoints_batch.shape[1]}")
-        
+            raise ValueError(
+                f"Expected 34 keypoint coordinates, got {keypoints_batch.shape[1]}"
+            )
+
         # Move to device
         keypoints_batch = keypoints_batch.to(self.device)
-        
+
         # Run inference
         with torch.no_grad():
             outputs = self.model(keypoints_batch)
             probabilities = torch.sigmoid(outputs.squeeze())
-        
+
         # Get predictions
         results = []
         for prob in probabilities:
@@ -531,48 +553,50 @@ class KeypointClassifier:
             predicted_class = 1 if prob_value > 0.5 else 0
             confidence = prob_value if predicted_class == 1 else (1 - prob_value)
             results.append((self.classes[predicted_class], confidence))
-        
+
         return results
-    
+
     def __call__(self, keypoints) -> Tuple[str, float]:
         """
         Convenience method to allow calling the classifier directly.
-        
+
         Args:
             keypoints: Array of keypoints, shape (34,)
-        
+
         Returns:
             Tuple of (predicted_label, confidence)
         """
         return self.predict(keypoints)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import sys
-    
+
     # Example usage
-    if len(sys.argv) > 1 and sys.argv[1] == 'test':
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
         # Test the classifier with dummy data
         model_path = "models/pose_classification_best.pt"
-        
+
         if os.path.exists(model_path):
             classifier = KeypointClassifier(model_path)
-            
+
             # Create dummy keypoints (34 coordinates)
             dummy_keypoints = np.random.randn(34)
-            
+
             # Single prediction
             label, confidence = classifier(dummy_keypoints)
             print(f"Prediction: {label} (confidence: {confidence:.2%})")
-            
+
             # Batch prediction
             dummy_batch = np.random.randn(5, 34)
             results = classifier.predict_batch(dummy_batch)
             print("\nBatch predictions:")
             for i, (label, conf) in enumerate(results):
-                print(f"  Sample {i+1}: {label} (confidence: {conf:.2%})")
+                print(f"  Sample {i + 1}: {label} (confidence: {conf:.2%})")
         else:
             print(f"Model not found: {model_path}")
-            print("Please train a model first using: yoloplay_train --csv data/train.csv")
+            print(
+                "Please train a model first using: yoloplay_train --csv data/train.csv"
+            )
     else:
         main()
