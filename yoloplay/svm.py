@@ -230,13 +230,33 @@ def train_svm_model(
         }
 
         svm = OneClassSVM()
-        grid_search = GridSearchCV(svm, param_grid, cv=5, scoring="accuracy")
-        grid_search.fit(X_scaled)
+        # For OneClassSVM, we need to perform grid search differently due to its unsupervised nature
+        # Since GridSearchCV with custom scorers can be problematic for OneClassSVM, we'll do manual grid search
+        from sklearn.model_selection import cross_val_score
 
-        print(f"Best parameters: {grid_search.best_params_}")
-        nu = grid_search.best_params_["nu"]
-        kernel = grid_search.best_params_["kernel"]
-        gamma = grid_search.best_params_["gamma"]
+        best_score = float("-inf")
+        best_params = None
+
+        print("Performing manual grid search for OneClassSVM hyperparameters...")
+        for nu in param_grid["nu"]:
+            for kernel in param_grid["kernel"]:
+                for gamma in param_grid["gamma"]:
+                    # Create and fit model with current parameters
+                    model = OneClassSVM(nu=nu, kernel=kernel, gamma=gamma)
+                    model.fit(X_scaled)
+
+                    # Score using the mean of the decision function
+                    scores = model.decision_function(X_scaled)
+                    mean_score = scores.mean()
+
+                    if mean_score > best_score:
+                        best_score = mean_score
+                        best_params = {"nu": nu, "kernel": kernel, "gamma": gamma}
+
+        print(f"Best parameters: {best_params}")
+        nu = best_params["nu"]
+        kernel = best_params["kernel"]
+        gamma = best_params["gamma"]
 
     # Train the model
     detector = OneClassSVMAnomalyDetector(nu=nu, kernel=kernel, gamma=gamma)

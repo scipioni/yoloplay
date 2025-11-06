@@ -153,7 +153,7 @@ def train_model(
         epochs: Number of training epochs
         batch_size: Batch size for training
         learning_rate: Learning rate for optimizer
-        device: Device to train on ('auto', 'cpu', or 'cuda')
+        device: Device to tra ('auto', 'cpu', or 'cuda')
         split_ratio: Train/validation split ratio (default: 0.8)
         patience: Early stopping patience in epochs (default: 10)
         random_seed: Random seed for reproducibility (default: 42)

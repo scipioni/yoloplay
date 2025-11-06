@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional
 import cv2
 import numpy as np
 
-from .classification import KeypointClassifier
 from .config import IMAGE_EXTENSIONS, Config
 from .detectors import MediaPipePoseDetector, PoseDetector, YOLOPoseDetector
 from .frame_providers import (
@@ -222,25 +221,6 @@ class PoseProcessor:
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.7,
                             (0, 255, 0),
-                            2,
-                        )
-
-                    # Add classification result to frame if available
-                    if classification_label is not None:
-                        # Determine color based on classification
-                        color = (
-                            (0, 255, 0)
-                            if classification_label == "standing"
-                            else (0, 0, 255)
-                        )
-                        text = f"Pose: {classification_label.upper()} ({classification_confidence:.1%})"
-                        cv2.putText(
-                            annotated_frame,
-                            text,
-                            (10, 90),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.7,
-                            color,
                             2,
                         )
 

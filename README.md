@@ -98,9 +98,9 @@ Options:
 Create dataset for training:
 ```bash
 # docker compose run --rm yoloplay
-yoloplay --video data/calibration.mkv --save data/train.csv
-yolotrain --csv data/train.csv --model-path data/svm.pkl [--grid-search]
-yoloplay --video data/office.mkv --svm-model data/svm.pkl
+yoloplay --video data/rooms/ingegno.mkv --save data/rooms/ingegno.csv
+yolotrain --csv data/rooms/ingegno.csv --model-path data/rooms/ingegno.pkl --grid-search
+yoloplay --video data/office.mkv --svm-model data/room/ingegno.pkl
 ```
 
 
