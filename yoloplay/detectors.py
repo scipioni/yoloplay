@@ -5,12 +5,12 @@ import cv2
 import numpy as np
 
 
-class Keypoints:
+class Keypoint:
     """
-    Common keypoints class that normalizes data from YOLO and MediaPipe pose detectors.
+    Represents a single person's pose keypoints.
 
-    Provides a unified interface for accessing keypoints regardless of the source detector.
-    All keypoints are normalized to [0, 1] range for consistent processing.
+    Stores normalized keypoints data with additional metadata like bounding box
+    and person ID. Provides methods for accessing and filtering keypoints.
     """
 
     # COCO keypoint names for reference
@@ -38,130 +38,139 @@ class Keypoints:
         self,
         keypoints: Union[np.ndarray, Any],
         source: str = "yolo",
+        person_id: Optional[int] = None,
         image_shape: Optional[tuple] = None,
-        normalize=True,
+        normalize: bool = False,
     ):
         """
-        Initialize keypoints from YOLO or MediaPipe data.
+        Initialize a single person's keypoints.
 
         Args:
-            keypoints: Raw keypoints data from detector
+            keypoints: Keypoints array or MediaPipe landmarks object
             source: Source detector ("yolo" or "mediapipe")
-            image_shape: Image dimensions (height, width) for YOLO normalization
+            person_id: Optional person identifier
+            image_shape: Optional image dimensions (height, width)
+            normalize: Whether to normalize the keypoints
         """
         self.source = source.lower()
+        self.person_id = person_id
         self.image_shape = image_shape
-        self._original_landmarks = None  # Store original MediaPipe landmarks
+        self._bbox = None  # Lazy computed bounding box
+        self.anomaly_detected: bool = False
+        self.anomaly_score: float = .0
 
         if normalize:
-            self._keypoints = None
             if self.source == "yolo":
-                self._normalize_yolo_keypoints(keypoints)
+                self._data = self._normalize_yolo(keypoints, image_shape)
             elif self.source == "mediapipe":
-                self._original_landmarks = keypoints  # Store original landmarks
-                self._normalize_mediapipe_keypoints(keypoints)
+                self._data = self._normalize_mediapipe(keypoints)
             else:
-                raise ValueError(
-                    f"Unsupported source: {source}. Must be 'yolo' or 'mediapipe'"
-                )
+                raise ValueError(f"Unsupported source: {source}")
         else:
-            self._keypoints = keypoints
+            self._data = keypoints
 
-    def _normalize_yolo_keypoints(self, keypoints: np.ndarray) -> None:
+    @staticmethod
+    def _normalize_yolo(keypoints: np.ndarray, image_shape: tuple) -> np.ndarray:
         """
-        Normalize YOLO keypoints to [0, 1] range.
+        Normalize YOLO keypoints from pixel to [0, 1] range.
 
         Args:
-            keypoints: YOLO keypoints array (num_persons, 17, 3) - x, y, conf
+            keypoints: YOLO keypoints array (17, 3) - x, y, conf in pixels
+            image_shape: Image dimensions (height, width)
+
+        Returns:
+            Normalized keypoints array (17, 3)
         """
-        if self.image_shape is None:
+        if image_shape is None:
             raise ValueError(
                 "image_shape must be provided for YOLO keypoints normalization"
             )
 
-        height, width = self.image_shape
+        height, width = image_shape
 
         # Handle tensor conversion if needed
         if hasattr(keypoints, "cpu"):
             keypoints = keypoints.cpu().numpy()
 
-        # Normalize x, y coordinates to [0, 1] for all persons
-        normalized_keypoints = keypoints.copy()
-        normalized_keypoints[:, :, 0] /= width  # x coordinates
-        normalized_keypoints[:, :, 1] /= height  # y coordinates
+        # Normalize x, y coordinates to [0, 1]
+        normalized = keypoints.copy()
+        normalized[:, 0] /= width  # x coordinates
+        normalized[:, 1] /= height  # y coordinates
 
-        self._keypoints = normalized_keypoints
+        return normalized
 
-    def _normalize_mediapipe_keypoints(self, landmarks: Any) -> None:
+    @staticmethod
+    def _normalize_mediapipe(landmarks: Any) -> np.ndarray:
         """
-        Extract and store MediaPipe keypoints (already normalized).
+        Extract and normalize MediaPipe keypoints.
 
         Args:
             landmarks: MediaPipe pose landmarks object
+
+        Returns:
+            Normalized keypoints array (33, 3)
         """
         if not landmarks:
-            self._keypoints = np.zeros((33, 3))  # MediaPipe has 33 landmarks
-            return
+            return np.zeros((33, 3))
 
         # MediaPipe landmarks are already normalized to [0, 1]
         keypoints = np.zeros((33, 3))
         for i, landmark in enumerate(landmarks.landmark):
             keypoints[i] = [landmark.x, landmark.y, landmark.visibility]
 
-        self._keypoints = keypoints
+        return keypoints
 
     @property
     def data(self) -> np.ndarray:
         """Get the normalized keypoints array."""
-        return self._keypoints
+        return self._data
 
     @property
-    def original_landmarks(self) -> Any:
-        """Get the original MediaPipe landmarks object."""
-        return self._original_landmarks
+    def xy(self) -> np.ndarray:
+        """Get the normalized keypoints array."""
+        return self._data[:, :2]
 
     @property
-    def person_confidence(self) -> float:
-        """Get the average confidence/visibility for the person."""
-        if self._keypoints is None:
+    def confidence(self) -> float:
+        """Get the average confidence/visibility for this person."""
+        if self._data is None or len(self._data) == 0:
             return 0.0
-        return np.mean(self._keypoints[:, 2])
+        return np.mean(self._data[:, 2])
 
     @property
-    def num_persons(self) -> int:
-        """Get the number of persons detected."""
-        if self._keypoints is None:
-            return 0
-        if self.source == "yolo":
-            return self._keypoints.shape[0] if len(self._keypoints.shape) == 3 else 1
-        else:  # mediapipe
-            return 1  # MediaPipe only detects one person
-
-    def get_person_keypoints(self, person_idx: int = 0) -> np.ndarray:
+    def bbox(self) -> Optional[tuple]:
         """
-        Get keypoints for a specific person.
+        Get the bounding box (x_min, y_min, x_max, y_max) in normalized coordinates.
+        Lazy computed and cached.
+        """
+        if self._bbox is None and self._data is not None:
+            # Filter high confidence keypoints
+            valid_kpts = self._data[self._data[:, 2] > 0.5]
+            if len(valid_kpts) > 0:
+                x_coords = valid_kpts[:, 0]
+                y_coords = valid_kpts[:, 1]
+                self._bbox = (
+                    float(min(x_coords)),
+                    float(min(y_coords)),
+                    float(max(x_coords)),
+                    float(max(y_coords)),
+                )
+        return self._bbox
 
-        Args:
-            person_idx: Index of the person (0-based)
+    def get_bbox_pixels(self) -> Optional[tuple]:
+        """
+        Get the bounding box in pixel coordinates.
+        Requires image_shape to be set.
 
         Returns:
-            Keypoints array for the specified person
+            Tuple (x_min, y_min, x_max, y_max) in pixels or None
         """
-        if self._keypoints is None:
-            return np.zeros((17 if self.source == "yolo" else 33, 3))
+        if self.bbox is None or self.image_shape is None:
+            return None
 
-        if self.source == "yolo":
-            if (
-                len(self._keypoints.shape) == 3
-                and person_idx < self._keypoints.shape[0]
-            ):
-                return self._keypoints[person_idx]
-            elif person_idx == 0:
-                return self._keypoints
-            else:
-                return np.zeros((17, 3))
-        else:  # mediapipe
-            return self._keypoints if person_idx == 0 else np.zeros((33, 3))
+        h, w = self.image_shape
+        x_min, y_min, x_max, y_max = self.bbox
+        return (int(x_min * w), int(y_min * h), int(x_max * w), int(y_max * h))
 
     def get_keypoint(self, index: int) -> np.ndarray:
         """
@@ -173,9 +182,9 @@ class Keypoints:
         Returns:
             Array [x, y, confidence] for the keypoint
         """
-        if self._keypoints is None or index >= len(self._keypoints):
+        if self._data is None or index >= len(self._data):
             return np.array([0.0, 0.0, 0.0])
-        return self._keypoints[index]
+        return self._data[index]
 
     def get_keypoint_by_name(self, name: str) -> np.ndarray:
         """
@@ -218,127 +227,65 @@ class Keypoints:
 
         return np.array([0.0, 0.0, 0.0])
 
-    def filter_by_confidence(self, min_confidence: float) -> "Keypoints":
-        """
-        Filter keypoints based on person confidence and body part visibility.
+    def has_visible_arm(self, min_conf: float = 0.5) -> bool:
+        """Check if person has at least one visible arm."""
+        if self.source == "yolo":
+            left_arm_indices = [5, 7, 9]  # left_shoulder, left_elbow, left_wrist
+            right_arm_indices = [6, 8, 10]  # right_shoulder, right_elbow, right_wrist
+        else:  # mediapipe
+            left_arm_indices = [11, 13, 15]
+            right_arm_indices = [12, 14, 16]
 
-        Args:
-            min_confidence: Minimum confidence threshold
+        left_arm = any(self._data[i, 2] >= min_conf for i in left_arm_indices)
+        right_arm = any(self._data[i, 2] >= min_conf for i in right_arm_indices)
+
+        return left_arm or right_arm
+
+    def has_visible_leg(self, min_conf: float = 0.5) -> bool:
+        """Check if person has at least one visible leg."""
+        if self.source == "yolo":
+            left_leg_indices = [11, 13, 15]  # left_hip, left_knee, left_ankle
+            right_leg_indices = [12, 14, 16]  # right_hip, right_knee, right_ankle
+        else:  # mediapipe
+            left_leg_indices = [23, 25, 27]
+            right_leg_indices = [24, 26, 28]
+
+        left_leg = any(self._data[i, 2] >= min_conf for i in left_leg_indices)
+        right_leg = any(self._data[i, 2] >= min_conf for i in right_leg_indices)
+
+        return left_leg or right_leg
+
+    def get_kpts_xy(self) -> list:
+        """
+        Get keypoints as flattened list of x, y coordinates (without confidence).
 
         Returns:
-            New Keypoints object with filtered data
+            List of [x1, y1, x2, y2, ..., xn, yn]
         """
-        if self._keypoints is None:
-            return self
-
-        def has_visible_arm(keypoints: np.ndarray, min_conf: float) -> bool:
-            """Check if person has at least one visible arm."""
-            if self.source == "yolo":
-                # COCO keypoints: left_shoulder(5), right_shoulder(6), left_elbow(7), right_elbow(8), left_wrist(9), right_wrist(10)
-                left_arm_indices = [5, 7, 9]
-                right_arm_indices = [6, 8, 10]
-            else:  # mediapipe
-                # MediaPipe keypoints: left_shoulder(11), right_shoulder(12), left_elbow(13), right_elbow(14), left_wrist(15), right_wrist(16)
-                left_arm_indices = [11, 13, 15]
-                right_arm_indices = [12, 14, 16]
-
-            # Check left arm
-            left_arm = any(keypoints[i, 2] >= min_conf for i in left_arm_indices)
-            # Check right arm
-            right_arm = any(keypoints[i, 2] >= min_conf for i in right_arm_indices)
-
-            return left_arm or right_arm
-
-        def has_visible_leg(keypoints: np.ndarray, min_conf: float) -> bool:
-            """Check if person has at least one visible leg."""
-            if self.source == "yolo":
-                # COCO keypoints: left_hip(11), right_hip(12), left_knee(13), right_knee(14), left_ankle(15), right_ankle(16)
-                left_leg_indices = [11, 13, 15]
-                right_leg_indices = [12, 14, 16]
-            else:  # mediapipe
-                # MediaPipe keypoints: left_hip(23), right_hip(24), left_knee(25), right_knee(26), left_ankle(27), right_ankle(28)
-                left_leg_indices = [23, 25, 27]
-                right_leg_indices = [24, 26, 28]
-
-            # Check left leg
-            left_leg = any(keypoints[i, 2] >= min_conf for i in left_leg_indices)
-            # Check right leg
-            right_leg = any(keypoints[i, 2] >= min_conf for i in right_leg_indices)
-
-            return left_leg or right_leg
-
-        # For YOLO, filter persons based on confidence and body part visibility
-        if self.source == "yolo":
-            if len(self._keypoints.shape) == 3:  # Multiple persons
-                valid_persons = []
-                for i, person_kpts in enumerate(self._keypoints):
-                    # Check overall confidence
-                    avg_conf = np.mean(person_kpts[:, 2])
-                    has_conf = avg_conf >= min_confidence
-                    # Check body parts
-                    has_arm = has_visible_arm(person_kpts, min_confidence)
-                    has_leg = has_visible_leg(person_kpts, min_confidence)
-
-                    if has_conf and has_arm and has_leg:
-                        valid_persons.append(i)
-
-                if valid_persons:
-                    filtered_keypoints = self._keypoints[valid_persons]
-                else:
-                    # No persons meet criteria, return empty keypoints
-                    filtered_keypoints = np.zeros((0, 17, 3))
-            else:
-                # Single person
-                avg_conf = np.mean(self._keypoints[:, 2])
-                has_conf = avg_conf >= min_confidence
-                has_arm = has_visible_arm(self._keypoints, min_confidence)
-                has_leg = has_visible_leg(self._keypoints, min_confidence)
-
-                if has_conf and has_arm and has_leg:
-                    filtered_keypoints = self._keypoints
-                else:
-                    filtered_keypoints = np.zeros((17, 3))
-        else:
-            # MediaPipe - single person, check confidence and body parts
-            avg_conf = np.mean(self._keypoints[:, 2])
-            has_conf = avg_conf >= min_confidence
-            has_arm = has_visible_arm(self._keypoints, min_confidence)
-            has_leg = has_visible_leg(self._keypoints, min_confidence)
-
-            if has_conf and has_arm and has_leg:
-                filtered_keypoints = self._keypoints
-            else:
-                filtered_keypoints = np.zeros((33, 3))
-
-        # Create new Keypoints object with filtered data
-        filtered = Keypoints(
-            filtered_keypoints,
-            source=self.source,
-            image_shape=self.image_shape,
-            normalize=False,
-        )
-        return filtered
+        if self._data is None:
+            return []
+        result = []
+        for point in self._data:
+            result.append(point[0])
+            result.append(point[1])
+        return result
 
     def print_keypoints(self) -> None:
-        """
-        Print keypoints in a readable format.
-        """
-        if self._keypoints is None:
+        """Print this person's keypoints in a readable format."""
+        if self._data is None or len(self._data) == 0:
             print("No keypoints available")
             return
 
-        print(f"Keypoints from {self.source.upper()} detector:")
-        print(f"Total keypoints: {len(self._keypoints)}")
-        print("-" * 50)
+        print(f"Person ID: {self.person_id}, Confidence: {self.confidence:.3f}")
 
         if self.source == "yolo":
             # Print COCO keypoints
             for i, name in enumerate(self.COCO_KEYPOINTS):
-                if i < len(self._keypoints):
-                    x, y, conf = self._keypoints[i]
-                    print("2d")
+                if i < len(self._data):
+                    x, y, conf = self._data[i]
+                    print(f"  {name:20s}: x={x:.3f}, y={y:.3f}, conf={conf:.3f}")
         elif self.source == "mediapipe":
-            # Print MediaPipe landmark names (simplified)
+            # Print MediaPipe landmark names
             landmark_names = [
                 "nose",
                 "left_eye_inner",
@@ -375,67 +322,506 @@ class Keypoints:
                 "right_foot_index",
             ]
 
-            for i, (x, y, conf) in enumerate(self._keypoints):
+            for i, (x, y, conf) in enumerate(self._data):
                 name = landmark_names[i] if i < len(landmark_names) else f"landmark_{i}"
-                print("2d")
+                print(f"  {name:20s}: x={x:.3f}, y={y:.3f}, conf={conf:.3f}")
+
+        # Print bounding box if available
+        bbox = self.bbox
+        if bbox:
+            print(
+                f"  Bounding box: x_min={bbox[0]:.3f}, y_min={bbox[1]:.3f}, x_max={bbox[2]:.3f}, y_max={bbox[3]:.3f}"
+            )
+    
+    def draw_skeleton(self, frame: np.ndarray, skeleton: list, pose_palette: list) -> np.ndarray:
+        """
+        Draw skeleton connections on frame for YOLO-style visualization.
+        
+        Args:
+            frame: Frame to draw on
+            skeleton: List of keypoint connection pairs
+            pose_palette: Color palette for connections
+            
+        Returns:
+            Frame with skeleton drawn
+        """
+        if self._data is None or len(self._data) == 0:
+            return frame
+        
+        for i, sk in enumerate(skeleton):
+            # Convert from 1-based to 0-based indexing
+            idx1 = sk[0] - 1
+            idx2 = sk[1] - 1
+            
+            if idx1 >= len(self._data) or idx2 >= len(self._data):
+                continue
+            
+            # Convert normalized coordinates to pixel coordinates
+            pos1 = (
+                int(self._data[idx1][0] * frame.shape[1]),
+                int(self._data[idx1][1] * frame.shape[0]),
+            )
+            pos2 = (
+                int(self._data[idx2][0] * frame.shape[1]),
+                int(self._data[idx2][1] * frame.shape[0]),
+            )
+            
+            # Check if both points have high confidence
+            conf1 = self._data[idx1][2]
+            conf2 = self._data[idx2][2]
+            
+            if (
+                conf1 > 0.5
+                and conf2 > 0.5
+                and pos1[0] > 0
+                and pos1[1] > 0
+                and pos2[0] > 0
+                and pos2[1] > 0
+            ):
+                # Draw the bone
+                color = pose_palette[i]
+                cv2.line(frame, pos1, pos2, color, thickness=2, lineType=cv2.LINE_AA)
+        
+        return frame
+    
+    def draw_bbox(self, frame: np.ndarray, color: tuple = (128, 128, 128), thickness: int = 2) -> np.ndarray:
+        """
+        Draw bounding box on frame.
+        
+        Args:
+            frame: Frame to draw on
+            color: BGR color tuple for the box
+            thickness: Line thickness
+            
+        Returns:
+            Frame with bounding box drawn
+        """
+        if self._data is None or len(self._data) == 0:
+            return frame
+        
+        # Get high confidence keypoints
+        valid_kpts = self._data[self._data[:, 2] > 0.5]
+        if len(valid_kpts) == 0:
+            return frame
+        
+        x_coords = valid_kpts[:, 0]
+        y_coords = valid_kpts[:, 1]
+        
+        # Convert normalized to pixel coordinates
+        h, w = frame.shape[:2]
+        x_min = int(min(x_coords) * w)
+        x_max = int(max(x_coords) * w)
+        y_min = int(min(y_coords) * h)
+        y_max = int(max(y_coords) * h)
+        
+        # Draw bounding box
+        if self.anomaly_detected:
+            color = (0,0,255)
+        cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), color, thickness)
+        
+        # Add confidence text
+        text = f"{self.confidence:.2f}"
+        cv2.putText(
+            frame,
+            text,
+            (x_min, y_min - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+        
+        return frame
+    
+    def draw_mediapipe_landmarks(
+        self,
+        frame: np.ndarray,
+        mp_drawing,
+        mp_pose,
+        original_landmarks: Any,
+        fall_detected: bool = False
+    ) -> np.ndarray:
+        """
+        Draw MediaPipe landmarks and connections on frame.
+        
+        Args:
+            frame: Frame to draw on
+            mp_drawing: MediaPipe drawing utilities
+            mp_pose: MediaPipe pose module
+            original_landmarks: Original MediaPipe landmarks object
+            fall_detected: Whether a fall was detected (affects box color)
+            
+        Returns:
+            Frame with landmarks and bounding box drawn
+        """
+        if self._data is None or len(self._data) == 0:
+            return frame
+        
+        # Draw bounding box with appropriate color
+        bbox_color = (0, 0, 255) if fall_detected else (0, 255, 0)
+        frame = self.draw_bbox(frame, color=bbox_color, thickness=3)
+        
+        # Draw pose landmarks and connections
+        if original_landmarks is not None:
+            mp_drawing.draw_landmarks(
+                frame,
+                original_landmarks,
+                mp_pose.POSE_CONNECTIONS,
+                landmark_drawing_spec=mp_drawing.DrawingSpec(
+                    color=(0, 255, 0), thickness=2, circle_radius=2
+                ),
+                connection_drawing_spec=mp_drawing.DrawingSpec(
+                    color=(255, 0, 0), thickness=2
+                ),
+            )
+        
+        return frame
+
+
+class Keypoints:
+    """
+    Common keypoints class that normalizes data from YOLO and MediaPipe pose detectors.
+
+    Provides a unified interface for accessing keypoints regardless of the source detector.
+    All keypoints are normalized to [0, 1] range for consistent processing.
+    """
+
+    def __init__(
+        self,
+        keypoints: Union[np.ndarray, Any],
+        source: str = "yolo",
+        image_shape: Optional[tuple] = None,
+        normalize=True,
+    ):
+        """
+        Initialize keypoints from YOLO or MediaPipe data.
+
+        Args:
+            keypoints: Raw keypoints data from detector
+            source: Source detector ("yolo" or "mediapipe")
+            image_shape: Image dimensions (height, width) for YOLO normalization
+        """
+        self.source = source.lower()
+        self.image_shape = image_shape
+        self._original_landmarks = None  # Store original MediaPipe landmarks
+        self._keypoints = []  # List of Keypoint objects
+
+        if normalize:
+            if self.source == "yolo":
+                self._normalize_yolo_keypoints(keypoints)
+            elif self.source == "mediapipe":
+                self._original_landmarks = keypoints  # Store original landmarks
+                self._normalize_mediapipe_keypoints(keypoints)
+            else:
+                raise ValueError(
+                    f"Unsupported source: {source}. Must be 'yolo' or 'mediapipe'"
+                )
+        else:
+            # When normalize=False, convert raw arrays to Keypoint objects
+            self._create_keypoints_from_array(keypoints)
+
+    def _normalize_yolo_keypoints(self, keypoints: np.ndarray) -> None:
+        """
+        Normalize YOLO keypoints to [0, 1] range and create Keypoint objects.
+
+        Args:
+            keypoints: YOLO keypoints array (num_persons, 17, 3) - x, y, conf
+        """
+        # Handle tensor conversion if needed
+        if hasattr(keypoints, "cpu"):
+            keypoints = keypoints.cpu().numpy()
+
+        # Create Keypoint objects for each person using Keypoint's normalization
+        self._keypoints = []
+        if len(keypoints.shape) == 3:  # Multiple persons
+            for person_idx, person_kpts in enumerate(keypoints):
+                kp = Keypoint(
+                    person_kpts,
+                    source=self.source,
+                    person_id=person_idx,
+                    image_shape=self.image_shape,
+                    normalize=True,
+                )
+                self._keypoints.append(kp)
+        elif len(keypoints.shape) == 2:  # Single person
+            kp = Keypoint(
+                keypoints,
+                source=self.source,
+                person_id=0,
+                image_shape=self.image_shape,
+                normalize=True,
+            )
+            self._keypoints.append(kp)
+
+    def _normalize_mediapipe_keypoints(self, landmarks: Any) -> None:
+        """
+        Extract and store MediaPipe keypoints (already normalized) as Keypoint objects.
+
+        Args:
+            landmarks: MediaPipe pose landmarks object
+        """
+        self._keypoints = []
+
+        # Create Keypoint object using Keypoint's normalization
+        kp = Keypoint(
+            landmarks,
+            source=self.source,
+            person_id=0,
+            image_shape=self.image_shape,
+            normalize=True,
+        )
+        self._keypoints.append(kp)
+
+    def _create_keypoints_from_array(self, keypoints_array: np.ndarray) -> None:
+        """
+        Create Keypoint objects from already normalized array.
+
+        Args:
+            keypoints_array: Normalized keypoints array
+        """
+        self._keypoints = []
+
+        if keypoints_array is None:
+            return
+
+        if len(keypoints_array.shape) == 3:  # Multiple persons (YOLO)
+            for person_idx, person_kpts in enumerate(keypoints_array):
+                kp = Keypoint(
+                    person_kpts,
+                    source=self.source,
+                    person_id=person_idx,
+                    image_shape=self.image_shape,
+                )
+                self._keypoints.append(kp)
+        elif len(keypoints_array.shape) == 2:  # Single person
+            kp = Keypoint(
+                keypoints_array,
+                source=self.source,
+                person_id=0,
+                image_shape=self.image_shape,
+            )
+            self._keypoints.append(kp)
+
+    def __iter__(self):
+        """Allow iteration over Keypoint objects."""
+        return iter(self._keypoints)
+    
+    def __len__(self) -> int:
+        """Return the number of persons detected."""
+        return len(self._keypoints)
+    
+    def __getitem__(self, index: int) -> Keypoint:
+        """
+        Allow indexing to access Keypoint objects.
+        
+        Args:
+            index: Index of the person
+            
+        Returns:
+            Keypoint object at the specified index
+        """
+        return self._keypoints[index]
+
+    @property
+    def data(self) -> np.ndarray:
+        """Get the normalized keypoints array for backward compatibility."""
+        if not self._keypoints:
+            return None
+
+        # For single person, return just the array
+        if len(self._keypoints) == 1:
+            return self._keypoints[0].data
+
+        # For multiple persons, stack their data
+        return np.array([kp.data for kp in self._keypoints])
+
+    @property
+    def original_landmarks(self) -> Any:
+        """Get the original MediaPipe landmarks object."""
+        return self._original_landmarks
+
+    @property
+    def person_confidence(self) -> float:
+        """Get the average confidence/visibility for the first person."""
+        if not self._keypoints:
+            return 0.0
+        return self._keypoints[0].confidence
+
+    @property
+    def num_persons(self) -> int:
+        """Get the number of persons detected."""
+        return len(self._keypoints)
+
+    def get_person_keypoints(self, person_idx: int = 0) -> np.ndarray:
+        """
+        Get keypoints for a specific person.
+
+        Args:
+            person_idx: Index of the person (0-based)
+
+        Returns:
+            Numpy array of keypoints for backward compatibility
+        """
+        if person_idx >= len(self._keypoints):
+            return np.zeros((17 if self.source == "yolo" else 33, 3))
+
+        # Return the data array for backward compatibility
+        return self._keypoints[person_idx].data
+
+    def get_person(self, person_idx: int = 0) -> Optional[Keypoint]:
+        """
+        Get Keypoint object for a specific person.
+
+        Args:
+            person_idx: Index of the person (0-based)
+
+        Returns:
+            Keypoint object for the specified person or None
+        """
+        if person_idx >= len(self._keypoints):
+            return None
+        return self._keypoints[person_idx]
+
+    def get_keypoint(self, index: int, person_idx: int = 0) -> np.ndarray:
+        """
+        Get a specific keypoint by index from a specific person.
+
+        Args:
+            index: Keypoint index
+            person_idx: Person index (default: 0)
+
+        Returns:
+            Array [x, y, confidence] for the keypoint
+        """
+        if person_idx >= len(self._keypoints):
+            return np.array([0.0, 0.0, 0.0])
+        return self._keypoints[person_idx].get_keypoint(index)
+
+    def get_keypoint_by_name(self, name: str, person_idx: int = 0) -> np.ndarray:
+        """
+        Get a keypoint by name (COCO keypoints only) from a specific person.
+
+        Args:
+            name: Keypoint name (e.g., "nose", "left_shoulder")
+            person_idx: Person index (default: 0)
+
+        Returns:
+            Array [x, y, confidence] for the keypoint
+        """
+        if person_idx >= len(self._keypoints):
+            return np.array([0.0, 0.0, 0.0])
+        return self._keypoints[person_idx].get_keypoint_by_name(name)
+
+    def filter_by_confidence(self, min_confidence: float) -> "Keypoints":
+        """
+        Filter keypoints based on person confidence and body part visibility.
+
+        Args:
+            min_confidence: Minimum confidence threshold
+
+        Returns:
+            New Keypoints object with filtered Keypoint objects
+        """
+        if not self._keypoints:
+            return self
+
+        # Filter persons based on confidence and body part visibility
+        valid_keypoints = []
+        for kp in self._keypoints:
+            # Check overall confidence
+            has_conf = kp.confidence >= min_confidence
+            # Check body parts using Keypoint methods
+            has_arm = kp.has_visible_arm(min_confidence)
+            has_leg = kp.has_visible_leg(min_confidence)
+
+            if has_conf and has_arm and has_leg:
+                valid_keypoints.append(kp.data)
+
+        # Create filtered array
+        if valid_keypoints:
+            if len(valid_keypoints) > 1:
+                filtered_keypoints = np.array(valid_keypoints)
+            else:
+                filtered_keypoints = valid_keypoints[0]
+        else:
+            # No persons meet criteria, return empty keypoints
+            num_kpts = 17 if self.source == "yolo" else 33
+            filtered_keypoints = np.zeros((0, num_kpts, 3))
+
+        # Create new Keypoints object with filtered data
+        filtered = Keypoints(
+            filtered_keypoints,
+            source=self.source,
+            image_shape=self.image_shape,
+            normalize=False,
+        )
+        return filtered
+
+    def print_keypoints(self) -> None:
+        """
+        Print keypoints in a readable format for all persons.
+        """
+        if not self._keypoints:
+            print("No keypoints available")
+            return
+
+        print(f"Keypoints from {self.source.upper()} detector:")
+        print(f"Number of persons detected: {len(self._keypoints)}")
+        print("-" * 50)
+
+        for person_idx, kp in enumerate(self._keypoints):
+            print(f"\nPerson {person_idx}:")
+            kp.print_keypoints()
 
         print("-" * 50)
 
     def save(self, csv_writer, label=0) -> None:
         """
-        Save keypoints data directly to CSV file.
+        Save keypoints data directly to CSV file for all persons.
 
         Args:
-            keypoints: Detected keypoints data
+            csv_writer: CSV writer object
+            label: Label for the data
         """
-        # Add keypoints if available
-        if self.data is not None:
-            try:
-                # Get keypoints data (already normalized)
-                person_kpts = self.data
+        if not self._keypoints:
+            return
 
-                # Convert to list if needed
-                person_kpts_list = (
-                    person_kpts.tolist()
-                    if hasattr(person_kpts, "tolist")
-                    else person_kpts
-                )
+        try:
+            # Save keypoints for each person
+            for kp in self._keypoints:
+                row = [label]
+                for point in kp.data:
+                    row.append(point[0])  # x coordinate
+                    row.append(point[1])  # y coordinate
+                csv_writer.writerow(row)
 
-                # Save all keypoints in a single row: timestamp, x1, y1, x2, y2, ..., xn, yn
-                # Assuming keypoints are in shape (num_points, 3) where 3 is (x, y, confidence)
-                for keypoints in person_kpts_list:
-                    row = [label]
-                    for point in keypoints:
-                        row.append(point[0])
-                        row.append(point[1])
-                    csv_writer.writerow(row)
-
-            except Exception as e:
-                print(f"Error saving keypoints to CSV: {e}")
+        except Exception as e:
+            print(f"Error saving keypoints to CSV: {e}")
 
     def get_kpts_xy(self):
-        if self.data is None:
+        """
+        Get x,y coordinates for all persons.
+
+        Returns:
+            List of flattened x,y coordinates for each person
+        """
+        if not self._keypoints:
             return []
-        result = []
-        for keypoints in self.data:
-            kpts_xy = []
-            for point in keypoints:
-                kpts_xy.append(point[0])
-                kpts_xy.append(point[1])
-            result.append(kpts_xy)
-        return result
+        return [kp.get_kpts_xy() for kp in self._keypoints]
 
 
 class PoseDetector(ABC):
     """Abstract base class for pose detectors."""
 
     @abstractmethod
-    def detect(self, frame: np.ndarray) -> Keypoints:
+    def detect(self, frame: np.ndarray, min_confidence: float = 0.0) -> Keypoints:
         """
         Detect pose in the given frame.
 
         Args:
             frame: Input frame (BGR format)
+            min_confidence: Minimum confidence threshold for filtering keypoints
 
         Returns:
             Keypoints object with normalized pose data
@@ -520,15 +906,16 @@ class YOLOPoseDetector(PoseDetector):
 
         self.model = YOLO(model_path)
 
-    def detect(self, frame: np.ndarray) -> Keypoints:
+    def detect(self, frame: np.ndarray, min_confidence: float = 0.0) -> Keypoints:
         """
         Detect pose using YOLO model.
 
         Args:
             frame: Input frame (BGR format)
+            min_confidence: Minimum confidence threshold for filtering keypoints
 
         Returns:
-            Keypoints object with normalized pose data for all detected persons
+            Keypoints object with normalized and filtered pose data for all detected persons
         """
         results = self.model(frame)
 
@@ -545,7 +932,13 @@ class YOLOPoseDetector(PoseDetector):
                 np.zeros((0, 17, 3)), source="yolo", image_shape=frame.shape[:2]
             )
 
-        return Keypoints(keypoints_data, source="yolo", image_shape=frame.shape[:2])
+        keypoints = Keypoints(keypoints_data, source="yolo", image_shape=frame.shape[:2])
+        
+        # Apply confidence filtering if threshold is set
+        if min_confidence > 0.0:
+            keypoints = keypoints.filter_by_confidence(min_confidence)
+        
+        return keypoints
 
     def visualize(self, frame: np.ndarray, keypoints: Keypoints) -> np.ndarray:
         """
@@ -560,95 +953,10 @@ class YOLOPoseDetector(PoseDetector):
         """
         annotated_frame = frame.copy()
 
-        # Get keypoints data for visualization
-        keypoints_data = keypoints.data
-
-        # Draw skeleton for each person detected
-        if keypoints_data is not None and len(keypoints_data) > 0:
-            num_persons = keypoints.num_persons
-
-            for person_idx in range(num_persons):
-                person_kpts = keypoints.get_person_keypoints(person_idx)
-
-                # Draw connections (bones) between keypoints for this person
-                for i, sk in enumerate(self.skeleton):
-                    # Convert from 1-based to 0-based indexing and check bounds
-                    idx1 = sk[0] - 1
-                    idx2 = sk[1] - 1
-
-                    if idx1 >= len(person_kpts) or idx2 >= len(person_kpts):
-                        continue
-
-                    # Convert normalized coordinates back to pixel coordinates
-                    pos1 = (
-                        int(person_kpts[idx1][0] * frame.shape[1]),
-                        int(person_kpts[idx1][1] * frame.shape[0]),
-                    )
-                    pos2 = (
-                        int(person_kpts[idx2][0] * frame.shape[1]),
-                        int(person_kpts[idx2][1] * frame.shape[0]),
-                    )
-
-                    # Check if both points have high confidence
-                    conf1 = person_kpts[idx1][2]
-                    conf2 = person_kpts[idx2][2]
-
-                    if (
-                        conf1 > 0.5
-                        and conf2 > 0.5
-                        and pos1[0] > 0
-                        and pos1[1] > 0
-                        and pos2[0] > 0
-                        and pos2[1] > 0
-                    ):
-                        # Draw the bone (line between keypoints)
-                        color = self.pose_palette[i]
-                        cv2.line(
-                            annotated_frame,
-                            pos1,
-                            pos2,
-                            color,
-                            thickness=2,
-                            lineType=cv2.LINE_AA,
-                        )
-
-                # Calculate bounding box from keypoints for this person
-                valid_kpts = person_kpts[
-                    person_kpts[:, 2] > 0.5
-                ]  # Only use high confidence keypoints
-                if len(valid_kpts) > 0:
-                    x_coords = valid_kpts[:, 0]
-                    y_coords = valid_kpts[:, 1]
-
-                    # Convert normalized coordinates to pixel coordinates
-                    h, w = frame.shape[:2]
-                    x_min = int(min(x_coords) * w)
-                    x_max = int(max(x_coords) * w)
-                    y_min = int(min(y_coords) * h)
-                    y_max = int(max(y_coords) * h)
-
-                    # Draw bounding box
-                    cv2.rectangle(
-                        annotated_frame,
-                        (x_min, y_min),
-                        (x_max, y_max),
-                        (128, 128, 128),
-                        2,
-                    )
-
-                    # Add confidence text on the bounding box
-                    confidence = np.mean(person_kpts[:, 2])
-                    text = f"Conf: {confidence:.2f}"
-                    cv2.putText(
-                        annotated_frame,
-                        text,
-                        (x_min, y_min - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (255, 255, 255),
-                        1,
-                        cv2.LINE_AA,
-                    )
+        # Draw skeleton and bbox for each person using Keypoint methods
+        for kp in keypoints:
+            annotated_frame = kp.draw_skeleton(annotated_frame, self.skeleton, self.pose_palette)
+            annotated_frame = kp.draw_bbox(annotated_frame)
 
         return annotated_frame
 
@@ -683,25 +991,32 @@ class MediaPipePoseDetector(PoseDetector):
             min_detection_confidence=min_detection_confidence,
         )
 
-    def detect(self, frame: np.ndarray) -> Keypoints:
+    def detect(self, frame: np.ndarray, min_confidence: float = 0.0) -> Keypoints:
         """
         Detect pose using MediaPipe.
 
         Args:
             frame: Input frame (BGR format)
+            min_confidence: Minimum confidence threshold for filtering keypoints
 
         Returns:
-            Keypoints object with normalized pose data
+            Keypoints object with normalized and filtered pose data
         """
         # Convert BGR to RGB for MediaPipe
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.pose.process(rgb_frame)
 
         if results.pose_landmarks:
-            return Keypoints(results.pose_landmarks, source="mediapipe")
+            keypoints = Keypoints(results.pose_landmarks, source="mediapipe")
         else:
             # Return empty keypoints if no detection
-            return Keypoints(None, source="mediapipe")
+            keypoints = Keypoints(None, source="mediapipe")
+        
+        # Apply confidence filtering if threshold is set
+        if min_confidence > 0.0:
+            keypoints = keypoints.filter_by_confidence(min_confidence)
+        
+        return keypoints
 
     def visualize(
         self, frame: np.ndarray, keypoints: Keypoints, fall_detected: bool = False
@@ -723,56 +1038,14 @@ class MediaPipePoseDetector(PoseDetector):
 
         annotated_frame = frame.copy()
 
-        # Get keypoints data (already normalized)
-        keypoints_data = keypoints.data
-
-        if keypoints_data is not None and len(keypoints_data) > 0:
-            # Calculate bounding box from keypoints
-            x_coords = keypoints_data[:, 0]
-            y_coords = keypoints_data[:, 1]
-
-            # Convert normalized coordinates to pixel coordinates
-            h, w, _ = frame.shape
-            x_min = int(min(x_coords) * w)
-            x_max = int(max(x_coords) * w)
-            y_min = int(min(y_coords) * h)
-            y_max = int(max(y_coords) * h)
-
-            # Draw bounding box with red color if fall detected
-            if fall_detected:
-                cv2.rectangle(
-                    annotated_frame, (x_min, y_min), (x_max, y_max), (0, 0, 255), 3
-                )
-            else:
-                cv2.rectangle(
-                    annotated_frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 3
-                )
-
-            # Add confidence text on the bounding box
-            confidence = keypoints.person_confidence
-            text = f"Conf: {confidence:.2f}"
-            cv2.putText(
+        # Draw landmarks for each person (MediaPipe only detects one person)
+        for kp in keypoints:
+            annotated_frame = kp.draw_mediapipe_landmarks(
                 annotated_frame,
-                text,
-                (x_min, y_min - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
-
-            # Draw pose landmarks and connections with default colors
-            self.mp_drawing.draw_landmarks(
-                annotated_frame,
+                self.mp_drawing,
+                self.mp_pose,
                 keypoints.original_landmarks,
-                self.mp_pose.POSE_CONNECTIONS,
-                landmark_drawing_spec=self.mp_drawing.DrawingSpec(
-                    color=(0, 255, 0), thickness=2, circle_radius=2
-                ),
-                connection_drawing_spec=self.mp_drawing.DrawingSpec(
-                    color=(255, 0, 0), thickness=2
-                ),
+                fall_detected
             )
 
         return annotated_frame

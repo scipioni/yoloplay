@@ -7,7 +7,7 @@ class Config:
 
     def __init__(self):
         self.detector: str = "yolo"
-        self.model: str = "yolov8n-pose.pt"
+        self.model: str = "yolo11n-pose.pt"
         self.camera: Optional[int] = None
         self.video: Optional[str] = None
         self.images: Optional[List[str]] = None

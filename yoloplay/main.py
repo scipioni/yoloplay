@@ -61,16 +61,6 @@ class PoseProcessor:
         self.keypoints_data = []  # List to store all keypoints data
         self.csv_file = None  # CSV file handle for saving keypoints
 
-        # Load classifier if specified
-        self.classifier = None
-        if classifier_path:
-            try:
-                self.classifier = KeypointClassifier(classifier_path)
-                print(f"Loaded classifier from: {classifier_path}")
-            except Exception as e:
-                print(f"Warning: Failed to load classifier: {e}")
-                self.classifier = None
-
         # Load SVM anomaly detector if specified
         self.svm_detector = None
         if svm_model_path:
@@ -143,48 +133,36 @@ class PoseProcessor:
                 if time_diff > 0:
                     self.fps = 1.0 / time_diff
 
-                # Detect pose
-                keypoints = self.detector.detect(frame)
+                # Detect pose with confidence filtering
+                keypoints = self.detector.detect(frame, min_confidence=self.min_confidence)
 
-                # Filter keypoints by confidence
-                keypoints = keypoints.filter_by_confidence(self.min_confidence)
-
-                # Classify keypoints if classifier is loaded
-                classification_label = None
-                classification_confidence = None
-                if (
-                    self.classifier
-                    and keypoints.data is not None
-                    and len(keypoints.data) > 0
-                ):
-                    for kpts_xy in keypoints.get_kpts_xy():
-                        classification_label, classification_confidence = (
-                            self.classifier(kpts_xy)
-                        )
-
-                        print(
-                            f"Classification: {classification_label} (confidence: {classification_confidence:.2%})"
-                        )
-
+            
                 # Detect anomalies if SVM detector is loaded
-                anomaly_detected = None
-                anomaly_score = None
-                if (
-                    self.svm_detector
-                    and keypoints.data is not None
-                    and len(keypoints.data) > 0
-                ):
-                    for kpts_xy in keypoints.get_kpts_xy():
-                        # Convert to numpy array and flatten for SVM (34,)
-                        keypoints_array = np.array(kpts_xy).flatten()
-                        anomaly_detected, anomaly_score = self.svm_detector.detect(
-                            keypoints_array
+                if self.svm_detector:
+                    for keypoint in keypoints:
+                        keypoint.anomaly_detected, keypoint.anomaly_score = self.svm_detector.detect(
+                            keypoint.xy
                         )
 
-                        status = "ANOMALY" if anomaly_detected else "NORMAL"
-                        print(
-                            f"SVM Anomaly Detection: {status} (score: {anomaly_score:.4f})"
-                        )
+
+                # anomaly_detected = None
+                # anomaly_score = None
+                # if (
+                #     self.svm_detector
+                #     and keypoints.data is not None
+                #     and len(keypoints.data) > 0
+                # ):
+                #     for kpts_xy in keypoints.get_kpts_xy():
+                #         # Convert to numpy array and flatten for SVM (34,)
+                #         keypoints_array = np.array(kpts_xy).flatten()
+                #         anomaly_detected, anomaly_score = self.svm_detector.detect(
+                #             keypoints_array
+                #         )
+
+                #         status = "ANOMALY" if anomaly_detected else "NORMAL"
+                #         print(
+                #             f"SVM Anomaly Detection: {status} (score: {anomaly_score:.4f})"
+                #         )
 
                 # Collect keypoints data if save is enabled
                 if self.save:
@@ -225,20 +203,20 @@ class PoseProcessor:
                         )
 
                     # Add anomaly detection result to frame if available
-                    if anomaly_detected is not None:
-                        # Determine color based on anomaly detection
-                        color = (0, 0, 255) if anomaly_detected else (0, 255, 0)
-                        status = "ANOMALY" if anomaly_detected else "NORMAL"
-                        text = f"SVM: {status} (score: {anomaly_score:.3f})"
-                        cv2.putText(
-                            annotated_frame,
-                            text,
-                            (10, 120),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.7,
-                            color,
-                            2,
-                        )
+                    # if anomaly_detected is not None:
+                    #     # Determine color based on anomaly detection
+                    #     color = (0, 0, 255) if anomaly_detected else (0, 255, 0)
+                    #     status = "ANOMALY" if anomaly_detected else "NORMAL"
+                    #     text = f"SVM: {status} (score: {anomaly_score:.3f})"
+                    #     cv2.putText(
+                    #         annotated_frame,
+                    #         text,
+                    #         (10, 120),
+                    #         cv2.FONT_HERSHEY_SIMPLEX,
+                    #         0.7,
+                    #         color,
+                    #         2,
+                    #     )
 
                     cv2.imshow(window_name, annotated_frame)
 
