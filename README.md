@@ -253,4 +253,5 @@ class MyCustomProvider(FrameProvider):
 register video
 ```
 mpv rtsp://10.1.109.144:554/s0 --stream-record=office.mkv
+mpv "rtsp://admin:password@10.6.13.179:554/cam/realmonitor?channel=2&subtype=0&unicast=true&proto=Onvif" --stream-record=dalcason.mkv
 ``` 
