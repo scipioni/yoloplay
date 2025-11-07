@@ -4,6 +4,8 @@ from typing import Any, Optional, Union
 import cv2
 import numpy as np
 
+from .autoencoder import OneClassAutoencoderClassifier
+
 
 class Keypoint:
     """
@@ -57,7 +59,8 @@ class Keypoint:
         self.image_shape = image_shape
         self._bbox = None  # Lazy computed bounding box
         self.anomaly_detected: bool = False
-        self.anomaly_score: float = .0
+        self.anomaly_score: float = 0.0
+        self.anomaly_method: str = ""  # Track which method detected the anomaly
 
         if normalize:
             if self.source == "yolo":
@@ -416,11 +419,13 @@ class Keypoint:
         
         # Draw bounding box
         if self.anomaly_detected:
-            color = (0,0,255)
+            color = (0, 0, 255)
         cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), color, thickness)
-        
+
         # Add confidence text
         text = f"{self.confidence:.2f}"
+        if self.anomaly_method:
+            text += f" ({self.anomaly_method})"
         cv2.putText(
             frame,
             text,

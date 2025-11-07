@@ -12,6 +12,8 @@ A flexible pose detection application supporting both YOLO and MediaPipe detecto
 - **Fall Detection:**
   - Real-time fall detection using pose keypoints
   - Support for both YOLO and MediaPipe detectors
+  - SVM-based anomaly detection for pose classification
+  - Autoencoder-based one-class classification for robust anomaly detection
   - Visual alerts and confidence scoring
 
 - **Flexible Input Sources:**
@@ -86,6 +88,9 @@ Options:
   --images PATH [PATH ...]     List of image files
   --mode {play,step}           Playback mode for video/images (default: play)
   --classifier PATH            Path to trained classification model (.pt file)
+  --svm-model PATH             Path to trained SVM anomaly detection model (.pkl file)
+  --svm-models NAME:PATH       Multiple SVM models in format 'name:path'
+  --autoencoder-model PATH     Path to trained autoencoder anomaly detection model (.pkl file)
   --min-confidence FLOAT       Minimum confidence threshold for keypoints (default: 0.55)
   --debug                      Show detailed debug information
   --calibrate PATH             Save calibration data to specified file
@@ -100,8 +105,14 @@ Create dataset for training:
 # docker compose run --rm yoloplay
 export VIDEO=data/rooms/termica
 yoloplay --video $VIDEO.mkv --save $VIDEO.csv
-yolotrain --csv $VIDEO.csv --model-path $VIDEO.pkl --grid-search
+
+# Train SVM model
+python yoloplay/svm.py --csv $VIDEO.csv --model-path $VIDEO.pkl --grid-search
 yoloplay --video data/office.mkv --svm-model $VIDEO.pkl
+
+# Train autoencoder model
+python train_autoencoder.py --csv $VIDEO.csv --model-path $VIDEO-autoencoder.pkl
+yoloplay --video data/office.mkv --autoencoder-model $VIDEO-autoencoder.pkl
 ```
 
 
@@ -161,6 +172,52 @@ fall_detector = YOLOFallDetector()  # or MediaPipeFallDetector()
 processor = PoseProcessor(detector, frame_provider, fall_detector)
 processor.run()
 ```
+### Anomaly Detection
+
+The application supports multiple anomaly detection methods for pose keypoints:
+
+#### SVM-based Anomaly Detection
+
+```python
+from yoloplay.svm import OneClassSVMAnomalyDetector
+
+# Load trained SVM detector
+svm_detector = OneClassSVMAnomalyDetector(model_path="models/svm_anomaly_detector.pkl")
+
+# Detect anomalies
+keypoints = np.array([...])  # 34 values: x1,y1,x2,y2,...,x17,y17
+is_anomaly, score = svm_detector.detect(keypoints)
+print(f"Anomaly: {is_anomaly}, Score: {score:.4f}")
+```
+
+#### Autoencoder-based One-Class Classification
+
+```python
+from yoloplay.autoencoder import OneClassAutoencoderClassifier
+
+# Load trained autoencoder classifier
+autoencoder_detector = OneClassAutoencoderClassifier()
+autoencoder_detector.load("models/autoencoder_anomaly_detector.pkl")
+
+# Detect anomalies
+is_anomaly, score = autoencoder_detector.detect(keypoints)
+print(f"Anomaly: {is_anomaly}, Score: {score:.4f}")
+```
+
+### Training Models
+
+#### Training SVM Model
+
+```bash
+python yoloplay/svm.py --csv training_data.csv --model-path models/svm_model.pkl --grid-search
+```
+
+#### Training Autoencoder Model
+
+```bash
+python train_autoencoder.py --csv training_data.csv --model-path models/autoencoder_model.pkl --latent-dim 16
+```
+
 ### Keypoint Classification
 
 Use the trained model to classify pose keypoints:
@@ -187,7 +244,7 @@ for i, (label, conf) in enumerate(results):
 
 **KeypointClassifier API:**
 - `predict(keypoints)`: Classify single keypoint array (34 values)
-- `predict_batch(keypoints_batch)`: Classify multiple keypoint arrays  
+- `predict_batch(keypoints_batch)`: Classify multiple keypoint arrays
 - `__call__(keypoints)`: Shorthand for `predict()`
 
 **Returns:**

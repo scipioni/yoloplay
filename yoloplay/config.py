@@ -20,6 +20,7 @@ class Config:
         self.classifier: Optional[str] = None
         self.svm_model: Optional[str] = None
         self.svm_models: Optional[Dict[str, str]] = None  # Multiple SVM models: name -> path
+        self.autoencoder_model: Optional[str] = None  # One-class autoencoder model path
 
     @classmethod
     def from_args(cls) -> "Config":
@@ -105,6 +106,11 @@ class Config:
             nargs="+",
             help="Multiple SVM models in format 'name:path' (e.g., 'default:model1.pkl camera1:model2.pkl')",
         )
+        parser.add_argument(
+            "--autoencoder-model",
+            type=str,
+            help="Path to trained one-class autoencoder model (.pkl file)",
+        )
 
         args = parser.parse_args()
 
@@ -122,6 +128,7 @@ class Config:
         config.min_confidence = args.min_confidence
         config.classifier = args.classifier
         config.svm_model = args.svm_model
+        config.autoencoder_model = args.autoencoder_model
 
         # Parse multiple SVM models if provided
         if args.svm_models:

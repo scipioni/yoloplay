@@ -18,6 +18,7 @@ from .frame_providers import (
     VideoFrameProvider,
 )
 from .svm import OneClassSVMAnomalyDetector
+from .autoencoder import OneClassAutoencoderClassifier
 from typing import Dict
 
 
@@ -38,6 +39,7 @@ class PoseProcessor:
         classifier_path: Optional[str] = None,
         svm_model_path: Optional[str] = None,
         svm_models: Optional[Dict[str, OneClassSVMAnomalyDetector]] = None,
+        autoencoder_model_path: Optional[str] = None,
     ):
         """
         Initialize the pose processor.
@@ -67,6 +69,17 @@ class PoseProcessor:
         # Load SVM anomaly detectors
         self.svm_detector = None  # For backward compatibility
         self.svm_models = svm_models or {}
+
+        # Load autoencoder anomaly detector
+        self.autoencoder_detector = None
+        if autoencoder_model_path:
+            try:
+                self.autoencoder_detector = OneClassAutoencoderClassifier()
+                self.autoencoder_detector.load(autoencoder_model_path)
+                print(f"Loaded autoencoder anomaly detector from: {autoencoder_model_path}")
+            except Exception as e:
+                print(f"Warning: Failed to load autoencoder detector: {e}")
+                self.autoencoder_detector = None
 
         # Load single SVM model for backward compatibility
         if svm_model_path and not self.svm_models:
@@ -161,12 +174,20 @@ class PoseProcessor:
                 # Select appropriate SVM model based on context (for now, use default)
                 selected_detector = self._select_svm_model()
 
-                # Detect anomalies if SVM detector is loaded
-                if selected_detector:
+                # Detect anomalies using available detectors
+                if selected_detector or self.autoencoder_detector:
                     for keypoint in keypoints:
-                        keypoint.anomaly_detected, keypoint.anomaly_score = selected_detector.detect(
-                            keypoint.xy
-                        )
+                        # Try autoencoder first if available, then SVM
+                        if self.autoencoder_detector:
+                            is_anomaly, score = self.autoencoder_detector.detect(keypoint.xy)
+                            keypoint.anomaly_detected = is_anomaly
+                            keypoint.anomaly_score = score
+                            keypoint.anomaly_method = "autoencoder"
+                        elif selected_detector:
+                            keypoint.anomaly_detected, keypoint.anomaly_score = selected_detector.detect(
+                                keypoint.xy
+                            )
+                            keypoint.anomaly_method = "svm"
 
 
                 # anomaly_detected = None
@@ -521,6 +542,7 @@ def main():
         classifier_path=config.classifier,
         svm_model_path=config.svm_model,  # For backward compatibility
         svm_models=svm_models if svm_models else None,
+        autoencoder_model_path=config.autoencoder_model,
     )
     processor.run()
 
