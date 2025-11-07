@@ -21,6 +21,9 @@ class Config:
         self.svm_model: Optional[str] = None
         self.svm_models: Optional[Dict[str, str]] = None  # Multiple SVM models: name -> path
         self.autoencoder_model: Optional[str] = None  # One-class autoencoder model path
+        self.kmeans_model: Optional[str] = None  # K-Means classifier model path
+        self.kmeans_n_clusters: int = 5  # Number of clusters for K-Means
+        self.kmeans_distance_threshold: float = 0.5  # Distance threshold for anomaly detection
 
     @classmethod
     def from_args(cls) -> "Config":
@@ -111,6 +114,23 @@ class Config:
             type=str,
             help="Path to trained one-class autoencoder model (.pkl file)",
         )
+        parser.add_argument(
+            "--kmeans-model",
+            type=str,
+            help="Path to trained K-Means classifier model (.pkl file)",
+        )
+        parser.add_argument(
+            "--kmeans-n-clusters",
+            type=int,
+            default=5,
+            help="Number of clusters for K-Means classifier (default: 5)",
+        )
+        parser.add_argument(
+            "--kmeans-distance-threshold",
+            type=float,
+            default=2.0,
+            help="Distance threshold for K-Means anomaly detection (default: 2.0)",
+        )
 
         args = parser.parse_args()
 
@@ -129,6 +149,9 @@ class Config:
         config.classifier = args.classifier
         config.svm_model = args.svm_model
         config.autoencoder_model = args.autoencoder_model
+        config.kmeans_model = args.kmeans_model
+        config.kmeans_n_clusters = args.kmeans_n_clusters
+        config.kmeans_distance_threshold = args.kmeans_distance_threshold
 
         # Parse multiple SVM models if provided
         if args.svm_models:

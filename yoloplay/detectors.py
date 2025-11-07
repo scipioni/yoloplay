@@ -1,8 +1,12 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Union
+import os
+import pickle
 
 import cv2
 import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 from .autoencoder import OneClassAutoencoderClassifier
 
@@ -425,7 +429,7 @@ class Keypoint:
         # Add confidence text
         text = f"{self.confidence:.2f}"
         if self.anomaly_method:
-            text += f" ({self.anomaly_method})"
+            text += f" ({self.anomaly_method} {self.anomaly_score:.2f})"
         cv2.putText(
             frame,
             text,
@@ -964,6 +968,195 @@ class YOLOPoseDetector(PoseDetector):
             annotated_frame = kp.draw_bbox(annotated_frame)
 
         return annotated_frame
+
+class KMeansClassifier:
+    """
+    K-Means clustering classifier for pose keypoints.
+    Groups similar poses into clusters and detects anomalies based on distance to cluster centers.
+    """
+
+    def __init__(
+        self,
+        model_path: Optional[str] = None,
+        n_clusters: int = 5,
+        distance_threshold: float = 1.5,
+        random_state: int = 42,
+    ):
+        """
+        Initialize the K-Means classifier.
+
+        Args:
+            model_path: Path to saved model file
+            n_clusters: Number of clusters to create
+            distance_threshold: Distance threshold for anomaly detection
+            random_state: Random state for reproducibility
+        """
+        self.n_clusters = n_clusters
+        self.distance_threshold = distance_threshold
+        self.random_state = random_state
+        self.model = None
+        self.scaler = None
+        self.is_trained = False
+
+        if model_path and os.path.exists(model_path):
+            self.load(model_path)
+
+    def train(self, keypoints_data: list[np.ndarray]) -> None:
+        """
+        Train the K-Means model on keypoints data.
+
+        Args:
+            keypoints_data: List of keypoints arrays, each shape (34,)
+        """
+        if not keypoints_data:
+            raise ValueError("No training data provided")
+
+        # Convert to numpy array
+        X = np.array(keypoints_data)
+        print(f"Training K-Means on {X.shape[0]} samples with {X.shape[1]} features")
+
+        # Standardize the data
+        self.scaler = StandardScaler()
+        X_scaled = self.scaler.fit_transform(X)
+
+        # Initialize and train the model
+        self.model = KMeans(
+            n_clusters=self.n_clusters,
+            random_state=self.random_state,
+            n_init=10
+        )
+        self.model.fit(X_scaled)
+        self.is_trained = True
+
+        print(f"K-Means training completed. {self.n_clusters} clusters created")
+
+    def classify(self, keypoints: np.ndarray) -> tuple[int, float]:
+        """
+        Classify keypoints into a cluster and return distance to cluster center.
+
+        Args:
+            keypoints: Keypoints array, shape (34,)
+
+        Returns:
+            Tuple of (cluster_id, distance_to_center)
+        """
+        if not self.is_trained:
+            raise RuntimeError("Model must be trained before classification")
+
+        # Ensure correct shape
+        if keypoints.shape != (34,):
+            keypoints = keypoints.flatten()
+            if keypoints.shape != (34,):
+                raise ValueError(f"Expected 34 keypoints, got {keypoints.shape}")
+
+        # Standardize and predict
+        keypoints_scaled = self.scaler.transform([keypoints])
+        cluster_id = self.model.predict(keypoints_scaled)[0]
+
+        # Calculate distance to cluster center
+        center = self.model.cluster_centers_[cluster_id]
+        distance = np.linalg.norm(keypoints_scaled[0] - center)
+
+        return int(cluster_id), float(distance)
+
+    def detect_anomaly(self, keypoints: np.ndarray) -> tuple[bool, float]:
+        """
+        Detect if keypoints are anomalous based on distance to nearest cluster center.
+
+        Args:
+            keypoints: Keypoints array, shape (34,)
+
+        Returns:
+            Tuple of (is_anomaly, anomaly_score)
+            - is_anomaly: True if anomalous, False if normal
+            - anomaly_score: Distance to nearest cluster center
+        """
+        _, distance = self.classify(keypoints)
+        is_anomaly = distance > self.distance_threshold
+        return is_anomaly, distance
+
+    def save(self, model_path: str) -> None:
+        """
+        Save the trained model and scaler to file.
+
+        Args:
+            model_path: Path to save the model
+        """
+        if not self.is_trained:
+            raise RuntimeError("Cannot save untrained model")
+
+        os.makedirs(
+            os.path.dirname(model_path) if os.path.dirname(model_path) else ".",
+            exist_ok=True,
+        )
+
+        model_data = {
+            "model": self.model,
+            "scaler": self.scaler,
+            "n_clusters": self.n_clusters,
+            "distance_threshold": self.distance_threshold,
+            "random_state": self.random_state,
+            "is_trained": self.is_trained,
+        }
+
+        with open(model_path, "wb") as f:
+            pickle.dump(model_data, f)
+
+        print(f"K-Means model saved to {model_path}")
+
+    def load(self, model_path: str) -> None:
+        """
+        Load a trained model and scaler from file.
+
+        Args:
+            model_path: Path to the saved model
+        """
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+
+        with open(model_path, "rb") as f:
+            model_data = pickle.load(f)
+
+        self.model = model_data["model"]
+        self.scaler = model_data["scaler"]
+        self.n_clusters = model_data["n_clusters"]
+        #self.distance_threshold = model_data["distance_threshold"]
+        self.random_state = model_data["random_state"]
+        self.is_trained = model_data["is_trained"]
+
+        print(f"K-Means model loaded from {model_path}")
+
+
+class PoseDetector(ABC):
+    """Abstract base class for pose detectors."""
+
+    @abstractmethod
+    def detect(self, frame: np.ndarray, min_confidence: float = 0.0) -> Keypoints:
+        """
+        Detect pose in the given frame.
+
+        Args:
+            frame: Input frame (BGR format)
+            min_confidence: Minimum confidence threshold for filtering keypoints
+
+        Returns:
+            Keypoints object with normalized pose data
+        """
+        pass
+
+    @abstractmethod
+    def visualize(self, frame: np.ndarray, keypoints: Keypoints) -> np.ndarray:
+        """
+        Visualize detection results on the frame.
+
+        Args:
+            frame: Input frame (BGR format)
+            keypoints: Keypoints object from detect()
+
+        Returns:
+            Annotated frame with pose visualization
+        """
+        pass
 
 
 class MediaPipePoseDetector(PoseDetector):

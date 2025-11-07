@@ -55,7 +55,7 @@ def load_csv_keypoints(csv_path: str, normal_label: int = 0) -> List[np.ndarray]
 def train_autoencoder_model(
     csv_path: str,
     model_path: str = "models/autoencoder_anomaly_detector.pkl",
-    latent_dim: int = 16,
+    latent_dim: int = 256,
     hidden_dims: List[int] = None,
     svm_nu: float = 0.1,
     svm_kernel: str = "rbf",
@@ -146,7 +146,8 @@ def main():
         "--hidden-dims",
         type=int,
         nargs="+",
-        default=[64, 32],
+        #default=[64, 32],
+        default=[256, 64],
         help="Hidden layer dimensions for encoder/decoder",
     )
     parser.add_argument(

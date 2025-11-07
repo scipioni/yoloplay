@@ -19,6 +19,7 @@ from .frame_providers import (
 )
 from .svm import OneClassSVMAnomalyDetector
 from .autoencoder import OneClassAutoencoderClassifier
+from .detectors import KMeansClassifier
 from typing import Dict
 
 
@@ -40,6 +41,9 @@ class PoseProcessor:
         svm_model_path: Optional[str] = None,
         svm_models: Optional[Dict[str, OneClassSVMAnomalyDetector]] = None,
         autoencoder_model_path: Optional[str] = None,
+        kmeans_model_path: Optional[str] = None,
+        kmeans_n_clusters: int = 5,
+        kmeans_distance_threshold: float = 1.5,
     ):
         """
         Initialize the pose processor.
@@ -80,6 +84,20 @@ class PoseProcessor:
             except Exception as e:
                 print(f"Warning: Failed to load autoencoder detector: {e}")
                 self.autoencoder_detector = None
+
+        # Load K-Means classifier
+        self.kmeans_classifier = None
+        if kmeans_model_path:
+            try:
+                self.kmeans_classifier = KMeansClassifier(
+                    model_path=kmeans_model_path,
+                    n_clusters=kmeans_n_clusters,
+                    distance_threshold=kmeans_distance_threshold,
+                )
+                print(f"Loaded K-Means classifier from: {kmeans_model_path} with n_clusters={kmeans_n_clusters}, distance_threshold={kmeans_distance_threshold}")
+            except Exception as e:
+                print(f"Warning: Failed to load K-Means classifier: {e}")
+                self.kmeans_classifier = None
 
         # Load single SVM model for backward compatibility
         if svm_model_path and not self.svm_models:
@@ -175,14 +193,19 @@ class PoseProcessor:
                 selected_detector = self._select_svm_model()
 
                 # Detect anomalies using available detectors
-                if selected_detector or self.autoencoder_detector:
+                if selected_detector or self.autoencoder_detector or self.kmeans_classifier:
                     for keypoint in keypoints:
-                        # Try autoencoder first if available, then SVM
+                        # Priority: autoencoder > K-Means > SVM
                         if self.autoencoder_detector:
                             is_anomaly, score = self.autoencoder_detector.detect(keypoint.xy)
                             keypoint.anomaly_detected = is_anomaly
                             keypoint.anomaly_score = score
                             keypoint.anomaly_method = "autoencoder"
+                        elif self.kmeans_classifier:
+                            is_anomaly, score = self.kmeans_classifier.detect_anomaly(keypoint.xy)
+                            keypoint.anomaly_detected = is_anomaly
+                            keypoint.anomaly_score = score
+                            keypoint.anomaly_method = "kmeans"
                         elif selected_detector:
                             keypoint.anomaly_detected, keypoint.anomaly_score = selected_detector.detect(
                                 keypoint.xy
@@ -543,6 +566,9 @@ def main():
         svm_model_path=config.svm_model,  # For backward compatibility
         svm_models=svm_models if svm_models else None,
         autoencoder_model_path=config.autoencoder_model,
+        kmeans_model_path=config.kmeans_model,
+        kmeans_n_clusters=config.kmeans_n_clusters,
+        kmeans_distance_threshold=config.kmeans_distance_threshold,
     )
     processor.run()
 

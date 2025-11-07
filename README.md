@@ -14,6 +14,7 @@ A flexible pose detection application supporting both YOLO and MediaPipe detecto
   - Support for both YOLO and MediaPipe detectors
   - SVM-based anomaly detection for pose classification
   - Autoencoder-based one-class classification for robust anomaly detection
+  - K-Means clustering for unsupervised pose grouping and anomaly detection
   - Visual alerts and confidence scoring
 
 - **Flexible Input Sources:**
@@ -91,6 +92,9 @@ Options:
   --svm-model PATH             Path to trained SVM anomaly detection model (.pkl file)
   --svm-models NAME:PATH       Multiple SVM models in format 'name:path'
   --autoencoder-model PATH     Path to trained autoencoder anomaly detection model (.pkl file)
+  --kmeans-model PATH          Path to trained K-Means classifier model (.pkl file)
+  --kmeans-n-clusters INT      Number of clusters for K-Means classifier (default: 5)
+  --kmeans-distance-threshold FLOAT  Distance threshold for K-Means anomaly detection (default: 0.5)
   --min-confidence FLOAT       Minimum confidence threshold for keypoints (default: 0.55)
   --debug                      Show detailed debug information
   --calibrate PATH             Save calibration data to specified file
@@ -113,6 +117,10 @@ yoloplay --video data/office.mkv --svm-model $VIDEO.pkl
 # Train autoencoder model
 python train_autoencoder.py --csv $VIDEO.csv --model-path $VIDEO-autoencoder.pkl
 yoloplay --video data/office.mkv --autoencoder-model $VIDEO-autoencoder.pkl
+
+# Train K-Means model
+python train_kmeans.py --csv $VIDEO.csv --model-path $VIDEO-kmeans.pkl --n-clusters 5
+yoloplay --video data/office.mkv --kmeans-model $VIDEO-kmeans.pkl
 ```
 
 
@@ -204,6 +212,23 @@ is_anomaly, score = autoencoder_detector.detect(keypoints)
 print(f"Anomaly: {is_anomaly}, Score: {score:.4f}")
 ```
 
+#### K-Means Clustering for Anomaly Detection
+
+```python
+from yoloplay.detectors import KMeansClassifier
+
+# Load trained K-Means classifier
+kmeans_classifier = KMeansClassifier(model_path="models/kmeans_classifier.pkl")
+
+# Classify pose into cluster
+cluster_id, distance = kmeans_classifier.classify(keypoints)
+print(f"Cluster: {cluster_id}, Distance to center: {distance:.4f}")
+
+# Detect anomalies based on distance threshold
+is_anomaly, score = kmeans_classifier.detect_anomaly(keypoints)
+print(f"Anomaly: {is_anomaly}, Score: {score:.4f}")
+```
+
 ### Training Models
 
 #### Training SVM Model
@@ -215,7 +240,13 @@ python yoloplay/svm.py --csv training_data.csv --model-path models/svm_model.pkl
 #### Training Autoencoder Model
 
 ```bash
-python train_autoencoder.py --csv training_data.csv --model-path models/autoencoder_model.pkl --latent-dim 16
+python train_autoencoder.py --csv training_data.csv --model-path models/autoencoder_model.pkl --latent-dim 256
+```
+
+#### Training K-Means Model
+
+```bash
+python train_kmeans.py --csv training_data.csv --model-path models/kmeans_model.pkl --n-clusters 5 --distance-threshold 0.5
 ```
 
 ### Keypoint Classification
