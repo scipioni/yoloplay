@@ -37,8 +37,8 @@ class Config:
         parser.add_argument(
             "--model",
             type=str,
-            # default="yolov8n-pose.pt",
-            default="yolo11n-pose.pt",
+            default="yolo11m-pose.pt",
+            #default="yolo11n-pose.pt",
             help="YOLO Pose model path (default: yolov8n-pose.pt)",
         )
         parser.add_argument(

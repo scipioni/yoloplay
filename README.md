@@ -98,9 +98,10 @@ Options:
 Create dataset for training:
 ```bash
 # docker compose run --rm yoloplay
-yoloplay --video data/rooms/ingegno.mkv --save data/rooms/ingegno.csv
-yolotrain --csv data/rooms/ingegno.csv --model-path data/rooms/ingegno.pkl --grid-search
-yoloplay --video data/office.mkv --svm-model data/room/ingegno.pkl
+export VIDEO=data/rooms/termica
+yoloplay --video $VIDEO.mkv --save $VIDEO.csv
+yolotrain --csv $VIDEO.csv --model-path $VIDEO.pkl --grid-search
+yoloplay --video data/office.mkv --svm-model $VIDEO.pkl
 ```
 
 
@@ -253,5 +254,8 @@ class MyCustomProvider(FrameProvider):
 register video
 ```
 mpv rtsp://10.1.109.144:554/s0 --stream-record=office.mkv
-mpv "rtsp://admin:password@10.6.13.179:554/cam/realmonitor?channel=2&subtype=0&unicast=true&proto=Onvif" --stream-record=dalcason.mkv
+
+export VIDEO="rtsp://admin:Admin123d@10.1.109.141:554/cam/realmonitor?channel=2&subtype=0&unicast=true&proto=Onvif"
+mpv $VIDEO --stream-record=termica.mkv
+                                                                    
 ``` 
