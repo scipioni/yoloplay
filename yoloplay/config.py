@@ -1,5 +1,5 @@
 import argparse
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 class Config:
@@ -19,6 +19,7 @@ class Config:
         self.min_confidence: float = 0.55
         self.classifier: Optional[str] = None
         self.svm_model: Optional[str] = None
+        self.svm_models: Optional[Dict[str, str]] = None  # Multiple SVM models: name -> path
 
     @classmethod
     def from_args(cls) -> "Config":
@@ -98,6 +99,12 @@ class Config:
             type=str,
             help="Path to trained SVM anomaly detection model (.pkl file)",
         )
+        parser.add_argument(
+            "--svm-models",
+            type=str,
+            nargs="+",
+            help="Multiple SVM models in format 'name:path' (e.g., 'default:model1.pkl camera1:model2.pkl')",
+        )
 
         args = parser.parse_args()
 
@@ -115,6 +122,15 @@ class Config:
         config.min_confidence = args.min_confidence
         config.classifier = args.classifier
         config.svm_model = args.svm_model
+
+        # Parse multiple SVM models if provided
+        if args.svm_models:
+            config.svm_models = {}
+            for model_spec in args.svm_models:
+                if ":" not in model_spec:
+                    parser.error(f"Invalid SVM model format: {model_spec}. Use 'name:path'")
+                name, path = model_spec.split(":", 1)
+                config.svm_models[name.strip()] = path.strip()
 
         return config
 

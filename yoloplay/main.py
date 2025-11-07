@@ -18,6 +18,7 @@ from .frame_providers import (
     VideoFrameProvider,
 )
 from .svm import OneClassSVMAnomalyDetector
+from typing import Dict
 
 
 class PoseProcessor:
@@ -36,6 +37,7 @@ class PoseProcessor:
         min_confidence: float = 0.55,
         classifier_path: Optional[str] = None,
         svm_model_path: Optional[str] = None,
+        svm_models: Optional[Dict[str, OneClassSVMAnomalyDetector]] = None,
     ):
         """
         Initialize the pose processor.
@@ -48,7 +50,8 @@ class PoseProcessor:
             save: Path to save keypoints data to JSON file
             min_confidence: Minimum confidence threshold for filtering keypoints
             classifier_path: Path to trained classification model for keypoint classification
-            svm_model_path: Path to trained SVM anomaly detection model
+            svm_model_path: Path to trained SVM anomaly detection model (for backward compatibility)
+            svm_models: Dictionary of named SVM models for multiple model support
         """
         self.detector = detector
         self.frame_provider = frame_provider
@@ -61,9 +64,12 @@ class PoseProcessor:
         self.keypoints_data = []  # List to store all keypoints data
         self.csv_file = None  # CSV file handle for saving keypoints
 
-        # Load SVM anomaly detector if specified
-        self.svm_detector = None
-        if svm_model_path:
+        # Load SVM anomaly detectors
+        self.svm_detector = None  # For backward compatibility
+        self.svm_models = svm_models or {}
+
+        # Load single SVM model for backward compatibility
+        if svm_model_path and not self.svm_models:
             try:
                 self.svm_detector = OneClassSVMAnomalyDetector(
                     model_path=svm_model_path
@@ -72,6 +78,22 @@ class PoseProcessor:
             except Exception as e:
                 print(f"Warning: Failed to load SVM detector: {e}")
                 self.svm_detector = None
+
+        # Load multiple SVM models if provided
+        if self.svm_models:
+            loaded_models = {}
+            for name, detector in self.svm_models.items():
+                loaded_models[name] = detector
+                print(f"Loaded SVM model '{name}'")
+            self.svm_models = loaded_models
+            # Set default detector for backward compatibility
+            if "default" in self.svm_models:
+                self.svm_detector = self.svm_models["default"]
+            elif self.svm_models:
+                # Use first model as default
+                default_name = next(iter(self.svm_models.keys()))
+                self.svm_detector = self.svm_models[default_name]
+                print(f"Using '{default_name}' as default SVM model")
 
         # Open CSV file for saving keypoints if save is enabled
         if save:
@@ -136,11 +158,13 @@ class PoseProcessor:
                 # Detect pose with confidence filtering
                 keypoints = self.detector.detect(frame, min_confidence=self.min_confidence)
 
-            
+                # Select appropriate SVM model based on context (for now, use default)
+                selected_detector = self._select_svm_model()
+
                 # Detect anomalies if SVM detector is loaded
-                if self.svm_detector:
+                if selected_detector:
                     for keypoint in keypoints:
-                        keypoint.anomaly_detected, keypoint.anomaly_score = self.svm_detector.detect(
+                        keypoint.anomaly_detected, keypoint.anomaly_score = selected_detector.detect(
                             keypoint.xy
                         )
 
@@ -280,6 +304,25 @@ class PoseProcessor:
                 )
                 self.frame_provider.set_mode(new_mode)
                 print(f"Mode changed to {new_mode.value}")
+
+    def _select_svm_model(self) -> Optional[OneClassSVMAnomalyDetector]:
+        """
+        Select the appropriate SVM model based on current context.
+
+        Returns:
+            Selected SVM detector or None if no models available
+        """
+        if not self.svm_models:
+            return self.svm_detector  # Backward compatibility
+
+        # For now, use simple selection logic - can be extended later
+        # TODO: Implement more sophisticated selection based on camera, pose type, etc.
+        if "default" in self.svm_models:
+            return self.svm_models["default"]
+        elif self.svm_models:
+            return next(iter(self.svm_models.values()))
+
+        return None
 
     def _get_status_text(self) -> Optional[str]:
         """
@@ -455,6 +498,17 @@ def main():
         frame_provider = CameraFrameProvider(camera_index)
         print(f"Using camera index: {camera_index}")
 
+    # Load multiple SVM models if specified
+    svm_models = {}
+    if config.svm_models:
+        for name, path in config.svm_models.items():
+            try:
+                detector_instance = OneClassSVMAnomalyDetector(model_path=path)
+                svm_models[name] = detector_instance
+                print(f"Loaded SVM model '{name}' from {path}")
+            except Exception as e:
+                print(f"Warning: Failed to load SVM model '{name}' from {path}: {e}")
+
     # Create processor and run
     processor = PoseProcessor(
         detector,
@@ -465,7 +519,8 @@ def main():
         save=config.save,
         min_confidence=config.min_confidence,
         classifier_path=config.classifier,
-        svm_model_path=config.svm_model,
+        svm_model_path=config.svm_model,  # For backward compatibility
+        svm_models=svm_models if svm_models else None,
     )
     processor.run()
 
